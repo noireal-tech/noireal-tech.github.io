@@ -1,5 +1,5 @@
 // Endless Clay offline cache. CACHE changes whenever an app file changes, so updates arrive on the next launch.
-const CACHE = 'endless-clay-9ceb4e1270';
+const CACHE = 'endless-clay-fcacb27c5f';
 const FILES = ['./', './index.html', './manifest.webmanifest', './phone.html', './phone.webmanifest', './js/config.js', './js/engine.js', './js/model.js', './js/net.js', './js/media.js', './js/game.js', './js/phone.js', './lib/three.min.js', './lib/peerjs.min.js', './lib/qrcode.js', './fonts/bricolage-grotesque.woff2', './fonts/ibm-plex-mono-500.woff2', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './privacy.html'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {

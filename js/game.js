@@ -459,6 +459,11 @@
   var tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), UP = new THREE.Vector3(0, 1, 0);
   function headWorld(out) { if (walkBehind()) return out.set(rig.position.x, rig.position.y + EYE * state.pscale, rig.position.z); return out.setFromMatrixPosition(camera.matrixWorld); }
   function headYaw() { camera.getWorldDirection(tmpV); return Math.atan2(-tmpV.x, -tmpV.z); }
+  // The lowest feet height between lo (feet in clay) and hi (feet clear), to under a millimetre.
+  function settle(head, lo, hi) {
+    for (var k = 0; k < 9; k++) { var mid = (lo + hi) / 2; if (solid(head.x, mid + 0.02, head.z)) lo = mid; else hi = mid; }
+    return hi;
+  }
   function bodyBlocked(x, z, feet, S) { return solid(x, feet + 0.65 * S, z) || solid(x, feet + 1.15 * S, z) || solid(x, feet + 1.55 * S, z); }
   function movePlayer(dt, mx, mz, my, jump, boost) {
     rig.updateMatrixWorld(true);
@@ -474,11 +479,24 @@
       if (up > 0 && solid(head.x, rig.position.y + 1.7 * S + up, head.z)) up = 0;
       rig.position.y = Math.min(rig.position.y + up, terrain.ny * V + 6 * S);
     } else {
+      // Standing on the ground, gravity doesn't pull you into it. (It used to: you sank a few millimetres a frame and the
+      // step-up below popped you back a whole step, a 4 cm shake several times a second that a headset makes very visible.)
+      var stand = grounded && vy <= 0 && !jump;
       if (jump && grounded) vy = 5.2 * S;
-      vy -= 14 * S * dt;
-      var ny = rig.position.y + vy * dt;
-      if (vy > 0 && solid(head.x, ny + 1.7 * S, head.z)) { vy = 0; ny = rig.position.y; }
-      rig.position.y = ny;
+      if (stand) {
+        vy = 0;
+        // Feet follow the ground: walking downhill you step down onto it each frame, rather than hovering and dropping
+        // in jolts. More than a big step below, it's a ledge, and you fall.
+        var lo = rig.position.y - 0.35 * S;
+        if (solid(head.x, lo + 0.02, head.z)) rig.position.y = settle(head, lo, rig.position.y);
+        else stand = false;
+      }
+      if (!stand) {
+        vy -= 14 * S * dt;
+        var ny = rig.position.y + vy * dt;
+        if (vy > 0 && solid(head.x, ny + 1.7 * S, head.z)) { vy = 0; ny = rig.position.y; }
+        rig.position.y = ny;
+      }
     }
     grounded = false;
     var lifted = 0;
@@ -487,6 +505,8 @@
     while (solid(head.x, rig.position.y + 0.02, head.z) && lifted < 0.9 * S) { rig.position.y += lift; lifted += lift; }
     // Still inside clay after a full step up: you're buried (say, a shape grown around you). Stay put rather than rocket upward.
     if (lifted > 0 && solid(head.x, rig.position.y + 0.02, head.z)) { rig.position.y = y0; lifted = 0; vy = 0; grounded = true; }
+    // Out of the clay: settle onto its surface instead of floating up to a step above it.
+    else if (lifted > 0) rig.position.y = settle(head, rig.position.y - lift, rig.position.y);
     if (lifted > 0 || solid(head.x, rig.position.y - 0.04 * S, head.z)) { if (vy < 0) vy = 0; grounded = true; }
     if (rig.position.y < -8) spawn();
   }
@@ -2671,7 +2691,7 @@
         if (edge(5)) { h.yAt = now; h.yHeld = false; }
         if (pressed(5) && !h.yHeld && now - h.yAt > 600) { h.yHeld = true; setPanelShown(!panel.shown); }
         if (!pressed(5) && h.prev[5] && !h.yHeld) { if (A) { ar.placed = false; panel.dirty = true; } else toggleFly(); }
-        if (!A && pressed(1)) { if (state.fly) mv.y += 1; else mv.jump = true; }
+        if (!A && pressed(1)) { if (state.fly) mv.y += 1; else mv.jump = edge(1); } // one jump per squeeze: a resting grip shouldn't hop you forever
         if (!A && pressed(3) && state.fly) mv.y -= 1;
       } else {
         if (shaping) { sh[2] = sx; sh[3] = -sy; }
