@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · Endless Clay</title>
+<meta name="description" content="What Endless Clay and Endless Clay Link store, what they share, and with whom.">
+<style>
+  :root { --bg: #1b1411; --panel: #231a16; --line: rgba(243, 233, 220, 0.16); --text: #f3e9dc; --muted: #bfae9c; --accent: #8fc2b0; color-scheme: dark; }
+  @media (prefers-color-scheme: light) { :root { --bg: #f4ece1; --panel: #fffaf3; --line: rgba(43, 32, 27, 0.16); --text: #2b201b; --muted: #6b5a4c; --accent: #2f6b5a; color-scheme: light; } }
+  @supports (-webkit-touch-callout: none) and (font: -apple-system-body) { html { font: -apple-system-body; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 1rem/1.6 "Avenir Next", "Segoe UI", system-ui, sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: max(24px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 48px max(18px, env(safe-area-inset-left)); }
+  h1 { font-size: 2rem; line-height: 1.15; margin: 0 0 4px; }
+  h2 { font-size: 1.15rem; margin: 32px 0 6px; }
+  p, li { color: var(--text); }
+  .muted { color: var(--muted); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 4px 18px 10px; margin-top: 20px; }
+  a { color: var(--accent); }
+  ul { padding-left: 1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Privacy</h1>
+  <p class="muted">Endless Clay and Endless Clay Link (the phone app). Last updated 1 November 2026.</p>
+
+  <div class="card">
+    <p><b>The short version:</b> there are no accounts, no ads, no analytics and no tracking. Your worlds, photos and sounds stay on your own devices. The only time anything leaves a device is when you link to someone: you play in a room together, or your phone sends something to your headset. Then it goes straight to them.</p>
+  </div>
+
+  <h2>What stays on your device</h2>
+  <ul>
+    <li>Your worlds, settings, name, avatar colour, places, clipboard, photo skins, sounds, skies and social links are saved in the browser storage of the device you made them on (your headset, computer or phone).</li>
+    <li>We never receive them. There is no Endless Clay server that stores anything.</li>
+    <li>They stay until you remove them: <b>New world</b> clears the world, the phone app can delete items from your headset, and clearing the site's data (or uninstalling) removes everything. Use <b>Save world file</b> to keep a backup you control.</li>
+  </ul>
+
+  <h2>Camera and microphone</h2>
+  <ul>
+    <li>The camera is used only when you press <b>Take photo</b>, to make a photo skin. The browser asks your permission first.</li>
+    <li>The phone app uses the microphone only while you record a sound, after the browser asks. Recordings stay on your phone until you choose to send one to your headset.</li>
+  </ul>
+
+  <h2>Playing together and the phone link</h2>
+  <ul>
+    <li>Rooms and the phone link connect devices directly to each other (WebRTC), so world changes, photos and sounds go device to device, encrypted, without passing through a server of ours.</li>
+    <li>To find each other, devices use a free public matchmaking service run by <a href="https://peerjs.com/">PeerJS</a>. It sees a random ID for each device and its IP address while connecting, not what you send.</li>
+    <li>Everyone in your room sees your chosen name and avatar colour and receives your changes to the world, including photos and sounds you put on shapes. Only share a room code with people you want in your world. The room's owner decides whether visitors can build.</li>
+    <li>Because devices connect directly, the people in your room (and your linked headset) can see each other's IP address, as with most multiplayer games. If a relay (TURN) server is set up, traffic may pass through it, still encrypted.</li>
+  </ul>
+
+  <h2>Billboards from social platforms</h2>
+  <p>When you place a YouTube, Instagram, Facebook, TikTok, Threads or Snapchat link as a billboard, that platform's own player loads inside the world on the flat screen, and that platform's privacy policy applies to it. Nothing from Endless Clay is sent to those platforms beyond what loading their player normally sends.</p>
+
+  <h2>Hosting</h2>
+  <p>The app's files are served by GitHub Pages. Like any web host, GitHub may log technical information such as IP addresses for security; see the <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub Privacy Statement</a>. The app works offline once loaded.</p>
+
+  <h2>Children</h2>
+  <p>Endless Clay isn't directed at children under 13 and doesn't collect personal information from anyone. Meta's age rules for Quest headsets apply.</p>
+
+  <h2>Changes and questions</h2>
+  <p>If this changes, the date at the top changes with it. Questions: open an issue at <a href="https://github.com/noireal-tech/noireal-tech.github.io/issues">github.com/noireal-tech/noireal-tech.github.io/issues</a>.</p>
+</main>
+</body>
+</html>

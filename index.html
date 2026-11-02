@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#231a16">
+<meta name="description" content="A multiplayer world-building sandbox where everything is clay. VR and mixed reality for Meta Quest.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<title>Endless Clay</title>
+<style>
+  @font-face { font-family: "Bricolage Grotesque"; src: url("fonts/bricolage-grotesque.woff2") format("woff2"); font-weight: 200 800; font-display: swap; }
+  @font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-500.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+  html, body { margin: 0; }
+  :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+
+  /* Layout: full-bleed 3D scene; a glaze-dark top bar, a potter's tool tray, and a shape-editing sheet float over it. */
+  :root {
+    --panel: rgba(35, 26, 22, 0.88);
+    --panel-solid: #231a16;
+    --raised: rgba(243, 233, 220, 0.07);
+    --line: rgba(243, 233, 220, 0.16);
+    --edge: rgba(243, 233, 220, 0.16); /* outlines of controls; 3:1 when more contrast is asked for */
+    --press: rgba(243, 233, 220, 0.14); /* laid over a control while it's held */
+    --press-dark: rgba(19, 38, 31, 0.16); /* the same, for light-filled controls */
+    --text: #f3e9dc;
+    --muted: #bfae9c;
+    --accent: #8fc2b0;
+    --accent-ink: #13261f;
+    --warn: #e9a08a;
+    --font-ui: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    --font-num: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --gutter-l: max(16px, env(safe-area-inset-left, 0px));
+    --gutter-r: max(16px, env(safe-area-inset-right, 0px));
+    --tray-h: 150px;
+    --sheet-h: 0px;
+    color-scheme: dark;
+  }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  /* On iPhone, the base text size follows the system text size setting; every size below is in rem, so it all scales */
+  @supports (-webkit-touch-callout: none) and (font: -apple-system-body) { html { font: -apple-system-body; } }
+  body { background: var(--panel-solid); color: var(--text); font-family: var(--font-ui); overflow: hidden; }
+  button, input { font: inherit; color: inherit; }
+  #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .glass { background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Top bar */
+  .top {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+    padding-left: var(--gutter-l); padding-right: var(--gutter-r);
+    pointer-events: none;
+  }
+  .top > * { pointer-events: auto; }
+  .brand { display: flex; flex-direction: column; line-height: 1; padding: 8px 12px; border-radius: 12px; min-width: 0; }
+  .brand b { font-weight: 800; font-size: 1.0625rem; letter-spacing: 0.08em; text-transform: uppercase; font-variation-settings: "opsz" 96; white-space: nowrap; }
+  .brand span { font-size: 0.6875rem; color: var(--muted); letter-spacing: 0.06em; margin-top: 4px; white-space: nowrap; }
+  .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: 100%; gap: 4px; align-items: center; padding: 5px; border-radius: 14px; position: relative; }
+  .icon-btn, .pill {
+    height: min(2.375rem, 57px); min-width: min(2.375rem, 57px); border-radius: 10px; border: 0; background: transparent; cursor: pointer; white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; font-size: min(0.875rem, 21px); font-weight: 600;
+  }
+  .icon-btn:hover, .pill:hover { background: var(--raised); }
+  .icon-btn svg { width: min(1.25rem, 30px); height: min(1.25rem, 30px); }
+  .players .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .players[data-live="1"] .dot { background: var(--accent); box-shadow: 0 0 0 3px rgba(143, 194, 176, 0.25); }
+  .vr { background: var(--accent); color: var(--accent-ink); padding: 0 14px; font-weight: 700; }
+  .vr:hover { background: #a4d1c1; }
+  .vr.off { background: var(--raised); color: var(--muted); font-weight: 600; }
+
+  #menu { position: absolute; top: calc(100% + 8px); right: 0; padding: 6px; border-radius: 14px; display: grid; gap: 2px; min-width: 200px; max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 80px); overflow-y: auto; }
+  #menu button { text-align: left; border: 0; background: transparent; padding: 10px 12px; border-radius: 9px; cursor: pointer; font-size: 0.9375rem; }
+  #menu button:hover { background: var(--raised); }
+  #menu #reset { color: var(--warn); }
+  #places { position: absolute; top: calc(100% + 8px); right: 0; padding: 12px; border-radius: 16px; display: grid; gap: 6px; width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 80px); overflow-y: auto; }
+  .pl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+  .pl-head strong { font-size: 1rem; font-weight: 800; }
+  .pl-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto auto auto; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px; }
+  .pl-row.here { background: rgba(143, 194, 176, 0.14); }
+  .pl-name { font-weight: 700; font-size: 0.875rem; }
+  .pl-row small, .pl-size small { color: var(--muted); font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .pl-size { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 8px 2px; border-top: 1px solid var(--line); margin-top: 4px; }
+  .pl-size > span { font-size: 0.8125rem; color: var(--muted); margin-right: 4px; }
+  .chip:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Bottom tray */
+  #tray { position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; padding-left: var(--gutter-l); padding-right: var(--gutter-r); padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); pointer-events: none; }
+  .tray-inner { pointer-events: auto; margin: 0 auto; max-width: 800px; border-radius: 18px; padding: 8px; display: grid; gap: 6px; container: tray / inline-size; max-height: min(calc(100dvh - var(--top-h, 70px) - env(safe-area-inset-bottom, 0px) - 26px), 58dvh); overflow: hidden auto; overscroll-behavior: contain; }
+  .tray-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .seg { display: inline-flex; padding: 3px; border-radius: 11px; background: rgba(0, 0, 0, 0.25); gap: 2px; }
+  .seg button { border: 0; background: transparent; border-radius: 8px; padding: 6px 12px; font-size: 0.8125rem; font-weight: 700; color: var(--muted); cursor: pointer; }
+  .seg button[aria-selected="true"] { background: var(--text); color: var(--panel-solid); }
+  /* Five equal segments; with very large text they fold to three a row */
+  #editSheet .seg { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  #editSheet .seg button { padding-left: 2px; padding-right: 2px; overflow-wrap: anywhere; }
+  .tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(3.625rem, 1fr)); gap: 3px; }
+  .tools.paint { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .tool { border: 0; background: transparent; border-radius: 11px; padding: 6px 1px 5px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 0.75rem; font-weight: 600; color: var(--muted); min-width: 0; }
+  .tool span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .tool svg { width: 1.5rem; height: 1.5rem; }
+  .tool:hover { background: var(--raised); color: var(--text); }
+  .tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .row2 { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; padding: 0 4px 2px; }
+  .colors { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  #swatches { display: flex; gap: 6px; }
+  .swatch { position: relative; width: 32px; height: 32px; border-radius: 50%; border: 2px solid rgba(0, 0, 0, 0.25); background: var(--sw); cursor: pointer; padding: 0; box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18); flex: none; }
+  .swatch[aria-pressed="true"] { outline: 2px solid var(--text); outline-offset: 2px; }
+  .swatch.crystal { background: linear-gradient(135deg, #ffffff 0%, #d4e8f2 45%, #9fc3d6 55%, #f4fafd 100%); border-color: rgba(238, 246, 251, 0.7); }
+  #colorName { font-size: 0.8125rem; color: var(--muted); white-space: nowrap; }
+  .size { display: flex; align-items: center; gap: 4px; }
+  .size button, .step button, .level-row button { width: 2rem; height: 2rem; border-radius: 9px; border: 1px solid var(--edge); background: transparent; cursor: pointer; font-size: 1.125rem; line-height: 1; flex: none; }
+  .size button:hover, .step button:hover, .level-row button:hover { background: var(--raised); }
+  #sizeOut { font-family: var(--font-num); font-size: 0.75rem; min-width: 4.75rem; text-align: center; font-variant-numeric: tabular-nums; }
+
+  /* Shape editing sheet */
+  #editSheet { position: fixed; z-index: 5; left: 0; right: 0; bottom: calc(var(--tray-h) + 8px); padding-left: var(--gutter-l); padding-right: var(--gutter-r); pointer-events: none; }
+  .sheet { pointer-events: auto; margin: 0 auto; max-width: 640px; border-radius: 18px; padding: 10px; display: grid; gap: 8px; container: sheet / inline-size; }
+  .sheet-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sheet-head strong { font-size: 0.9375rem; font-weight: 800; margin-right: auto; }
+  .chip { border: 1px solid var(--edge); background: transparent; border-radius: 999px; padding: 5px 11px; font-size: 0.8125rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .chip.primary { background: var(--text); color: var(--panel-solid); border-color: transparent; }
+  .pane { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; }
+  .step { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .step span { flex: 1; font-size: 0.8125rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .acts { display: flex; flex-wrap: wrap; gap: 6px; grid-column: 1 / -1; }
+  .level { grid-column: 1 / -1; display: grid; gap: 4px; }
+  .level-top { display: flex; justify-content: space-between; gap: 8px; font-size: 0.8125rem; color: var(--muted); }
+  #levelOut { font-family: var(--font-num); font-size: 0.75rem; color: var(--text); font-variant-numeric: tabular-nums; }
+  .level-row { display: flex; align-items: center; gap: 8px; }
+  #levelRange { flex: 1; min-width: 0; accent-color: var(--accent); }
+  .acts .chip.danger { color: var(--warn); }
+  .skin-pane { grid-template-columns: minmax(0, 1fr); }
+  .cats { display: flex; gap: 4px; align-items: center; overflow-x: auto; scrollbar-width: none; }
+  .cats button[role="tab"] { border: 0; background: transparent; border-radius: 9px; padding: 6px 10px; font-size: 0.8125rem; font-weight: 800; color: var(--muted); cursor: pointer; white-space: nowrap; }
+  .cats button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+  .hide-panels { margin-left: auto; width: 2rem; height: 2rem; flex: none; border-radius: 9px; border: 1px solid var(--edge); background: transparent; color: var(--text); cursor: pointer; display: grid; place-items: center; }
+  .hide-panels svg { width: 1.125rem; height: 1.125rem; }
+  .cat-body { display: grid; gap: 6px; min-width: 0; }
+  .cat-body.scroll { max-height: min(46vh, 420px); overflow-y: auto; padding-right: 2px; }
+  .cat-h, .cat-body h2 { font-size: 0.875rem; margin: 4px 0 0; }
+  .tray-inner.turning { animation: turn 300ms ease-in-out; }
+  html.reduce-motion .tray-inner.turning { animation: none; }
+  @keyframes turn { 0% { transform: perspective(900px) rotateY(0); } 50% { transform: perspective(900px) rotateY(88deg); } 51% { transform: perspective(900px) rotateY(-88deg); } 100% { transform: perspective(900px) rotateY(0); } }
+  body.panels-off #tray, body.panels-off #editSheet, body.panels-off #stick, body.panels-off .vert, body.panels-off #places { display: none !important; }
+  .show-panels { position: fixed; z-index: 6; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 14px); }
+  .cast-row { align-items: center; margin-left: auto; flex-wrap: nowrap; }
+  /* Tourist view: no making or changing, just getting around */
+  body.tourist #tray .tray-inner, body.tourist #editSheet, body.tourist #undo, body.tourist #redo, body.tourist [data-tourhide] { display: none !important; }
+  .tour-bar { pointer-events: auto; margin: 0 auto; max-width: 560px; border-radius: 16px; padding: 8px 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .tour-text { display: grid; flex: 1 1 160px; min-width: 0; line-height: 1.25; }
+  .tour-text span { color: var(--muted); font-size: 0.8125rem; }
+  .visit-row { align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  /* Ground arrows walk, the joystick goes up and down, so the Up/Down buttons step aside */
+  body.arrow-nav .vert { display: none !important; }
+  #embeds { position: fixed; inset: 0; z-index: 2; overflow: hidden; pointer-events: none; }
+  #embedsCam { position: absolute; left: 0; top: 0; transform-style: preserve-3d; }
+  .embed { position: absolute; left: 0; top: 0; pointer-events: auto; background: #000; border-radius: 6px; overflow: hidden; }
+  .embed iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .embed-x { position: absolute; top: 6px; right: 6px; width: 40px; height: 40px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 1.25rem; cursor: pointer; }
+  .watch-card { max-width: 900px; display: grid; gap: 10px; }
+  .watch-card h2 { margin: 0; font-size: 1.0625rem; }
+  .watch-box { position: relative; width: min(100%, calc(72vh * var(--ar, 1.778))); aspect-ratio: var(--ar, 1.778); margin: 0 auto; background: #000; border-radius: 12px; overflow: hidden; }
+  .watch-box iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .link-in { flex: 1 1 220px; min-width: 0; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--edge); border-radius: 999px; padding: 7px 12px; color: var(--text); font-size: 0.8125rem; }
+  .link-list { display: grid; gap: 4px; }
+  .link-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 10px; }
+  .link-row.on { background: var(--raised); }
+  .plat { flex: none; font-size: 0.6875rem; font-weight: 800; padding: 3px 8px; border-radius: 999px; background: var(--pc, #333); color: var(--pci, #fff); }
+  .bb-edit { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .m-sec { border-top: 1px solid var(--line); padding: 14px 0; display: grid; gap: 8px; }
+  .m-link { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; border-top: 0; }
+  .m-link .qr { width: 150px; height: 150px; border-radius: 12px; flex: none; background: #fff; }
+  .m-info { flex: 1 1 260px; min-width: 0; display: grid; gap: 6px; }
+  .m-info p { margin: 0; }
+  .m-info .url { word-break: break-all; }
+  .m-skies { display: flex; flex-wrap: wrap; gap: 10px; }
+  .m-skyw { display: flex; align-items: flex-start; gap: 2px; }
+  .m-sky { width: 128px; height: 64px; border-radius: 10px; border: 1px solid var(--line); background: var(--raised) center / cover; cursor: pointer; display: flex; align-items: flex-end; padding: 0; overflow: hidden; }
+  .m-sky span { background: rgba(35, 26, 22, 0.75); width: 100%; font-size: 0.75rem; padding: 2px 6px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-sky[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .m-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .m-name { font-weight: 700; min-width: 0; flex: 1 1 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-row select { background: var(--raised); color: var(--text); border: 1px solid var(--edge); border-radius: 999px; padding: 4px 8px; font-size: 0.8125rem; }
+  .skin-ui, .sound-ui { display: grid; gap: 8px; min-width: 0; }
+  #skinBar .skin-ui { padding-top: 2px; }
+  .skin-ui .acts, .sound-ui .acts { align-items: center; }
+  .thumbs { display: flex; gap: 6px; overflow-x: auto; padding: 3px; align-items: center; max-width: 100%; }
+  .skin-ui .muted.gap { margin-left: 6px; }
+  .thumb { width: 40px; height: 40px; flex: none; border-radius: 10px; border: 1px solid var(--edge); background: var(--raised) center / cover no-repeat; cursor: pointer; padding: 0; }
+  .thumb[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .muted { color: var(--muted); font-size: 0.8125rem; }
+  .cam-card { max-width: 640px; display: grid; gap: 4px; }
+  #camVideo { width: 100%; max-height: 60vh; border-radius: 14px; background: #000; object-fit: contain; }
+  #flash { position: fixed; inset: 0; z-index: 20; background: #fff; opacity: 0; pointer-events: none; }
+  #flash.go { animation: flash 380ms ease-out; }
+  @keyframes flash { from { opacity: 0.85; } to { opacity: 0; } }
+  /* Room to spare (an open foldable, a tablet, a desktop): the edit sheet sits at the side, so the shape stays in view */
+  @media (min-width: 720px) {
+    #editSheet { left: auto; right: 0; bottom: auto; top: calc(env(safe-area-inset-top, 0px) + 72px); width: 360px; padding-left: 0; }
+    #editSheet .pane { grid-template-columns: 1fr; }
+    #editSheet .sheet { max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 88px - var(--tray-h)); overflow: hidden auto; overscroll-behavior: contain; }
+  }
+
+  /* Touch movement */
+  #stick, .vert { display: none; }
+  @media (pointer: coarse) { #stick, .vert { display: flex; } }
+  #stick { position: fixed; z-index: 4; left: calc(var(--gutter-l) + 4px); bottom: calc(var(--tray-h) + var(--sheet-h) + 14px); width: 104px; height: 104px; border-radius: 50%; align-items: center; justify-content: center; touch-action: none; background: rgba(35, 26, 22, 0.42); border: 1px solid var(--edge); }
+  #stick[data-mode="resize"] { border-color: var(--accent); }
+  #stick .knob { width: 46px; height: 46px; border-radius: 50%; background: rgba(243, 233, 220, 0.85); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3); pointer-events: none; }
+  .vert { position: fixed; z-index: 4; right: calc(var(--gutter-r) + 4px); bottom: calc(var(--tray-h) + var(--sheet-h) + 14px); flex-direction: column; gap: 8px; }
+  .vert button { width: 62px; height: 46px; border-radius: 14px; border: 1px solid var(--edge); background: rgba(35, 26, 22, 0.6); font-weight: 700; font-size: 0.875rem; touch-action: none; }
+
+  #toast { position: fixed; z-index: 7; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 70px); padding: 10px 16px; border-radius: 12px; font-size: 0.875rem; max-width: calc(100% - 32px); text-align: center; }
+
+  /* Dialog cards (help, play together) */
+  .card-wrap { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(20, 14, 11, 0.55); padding-left: var(--gutter-l); padding-right: var(--gutter-r); padding-block: calc(env(safe-area-inset-top, 0px) + 16px) calc(env(safe-area-inset-bottom, 0px) + 16px); }
+  .card { width: 100%; max-width: 780px; max-height: 100%; overflow-y: auto; border-radius: 20px; padding: 22px; background: var(--panel-solid); border: 1px solid var(--line); }
+  .card h1 { font-size: clamp(1.625rem, 6vw, 2.375rem); font-weight: 800; letter-spacing: -0.01em; margin: 0 0 6px; text-wrap: balance; font-variation-settings: "opsz" 96; }
+  .card > p { margin: 0 0 16px; color: var(--muted); max-width: 62ch; line-height: 1.5; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .col { border: 1px solid var(--line); border-radius: 14px; padding: 14px; min-width: 0; }
+  .col h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--accent); margin: 0 0 10px; }
+  .col dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; font-size: 0.875rem; line-height: 1.35; }
+  .col dt { font-family: var(--font-num); font-size: 0.75rem; white-space: nowrap; padding-top: 1px; }
+  .col dd { margin: 0; color: var(--muted); }
+  .note { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(143, 194, 176, 0.12); font-size: 0.875rem; line-height: 1.5; }
+  .go { margin-top: 16px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .privacy-link { margin-right: auto; color: var(--muted); font-size: 0.875rem; padding: 12px 4px; }
+  .btn { background: var(--raised); border: 1px solid var(--edge); border-radius: 12px; padding: 11px 18px; font-weight: 700; font-size: 0.9375rem; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .btn.danger { color: var(--warn); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .field { display: grid; gap: 6px; font-size: 0.8125rem; color: var(--muted); }
+  .field input { background: rgba(0, 0, 0, 0.3); border: 1px solid var(--edge); border-radius: 10px; padding: 10px 12px; font-size: 1rem; color: var(--text); min-width: 0; }
+  .code-in { font-family: var(--font-num); letter-spacing: 0.3em; text-transform: uppercase; }
+  .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+  .row .field { flex: 1; min-width: 140px; }
+  .big-code { font-family: var(--font-num); font-size: 2.125rem; letter-spacing: 0.3em; color: var(--accent); }
+  #peerList { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+  #peerList li { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; }
+  #peerList i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); flex: none; }
+  #peerList small { color: var(--muted); }
+  .status { font-size: 0.875rem; color: var(--muted); }
+
+  @media (max-width: 440px) {
+    .brand { display: none !important; }
+    .top { justify-content: flex-end; }
+    .vr { padding: 0 10px; }
+    .icon-btn, .pill { min-width: min(2.125rem, 51px); padding: 0 6px; }
+  }
+
+  /* The tray lays itself out by how much text fits, not by device: as text grows, the same tray takes the phone layout,
+     then the large-text layout. (Container widths in em follow the tray's own text size.) */
+  @container tray (max-width: 25.5em) {
+    #colorName { display: none; }
+    .tool { font-size: 0.6875rem; }
+    .tool svg { width: 1.375rem; height: 1.375rem; }
+    .cats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 3px; align-items: stretch; }
+    .cats button[role="tab"] { white-space: normal; font-size: 0.75rem; line-height: 1.15; padding: 5px 3px; min-height: 44px; }
+    .hide-panels { align-self: center; }
+    .tray-head { gap: 6px; }
+    .tray-head .seg button { padding-left: 9px; padding-right: 9px; }
+    #sizeOut { min-width: 3.25rem; font-size: 0.6875rem; }
+    .cast-row .muted { display: none; }
+    .row2 { padding: 0; }
+    .colors { flex: 1 1 100%; }
+    #swatches { flex: 1 1 auto; flex-wrap: wrap; justify-content: space-between; gap: 6px 3px; }
+  }
+  @container tray (max-width: 15em) {
+    .cats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cats button[role="tab"] { overflow-wrap: anywhere; }
+    .hide-panels { grid-column: 1 / -1; justify-self: end; }
+    .tray-head { flex-wrap: wrap; }
+    .tray-head .seg { flex: 1 1 100%; }
+    .tray-head .seg button { flex: 1 1 0; }
+    .size { margin-left: auto; }
+    .tool span { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; line-height: 1.1; }
+    #swatches { justify-content: flex-start; gap: 6px; }
+  }
+  @container sheet (max-width: 18em) {
+    #editSheet .seg { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .pane { grid-template-columns: minmax(0, 1fr); }
+    .sheet-head strong { flex: 1 1 100%; }
+  }
+
+  /* Phones and narrow windows: while shapes are selected, the edit sheet takes the tray's place (same footprint, so the
+     joystick and the ground arrows stay where they are). Done, or tapping away, brings the tray back. */
+  body.edit-compact #tray .tray-inner { display: none !important; }
+  body.edit-compact #editSheet { bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); }
+  body.edit-compact .sheet { box-sizing: border-box; max-height: var(--edit-max, 60dvh); overflow: hidden auto; overscroll-behavior: contain; padding: 8px 10px; gap: 6px; }
+  body.edit-compact .level { gap: 0; }
+  body.edit-compact .level-row input[type="range"] { height: 36px; }
+  .pane[data-pane="size"] .acts { grid-column: auto; align-items: center; }
+  .sheet-colors { display: none; gap: 6px 3px; flex-wrap: wrap; justify-content: space-between; grid-column: 1 / -1; padding: 2px 0 4px; }
+  body.edit-compact .sheet-colors { display: flex; }
+  .look-h { grid-column: 1 / -1; margin: 2px 0 0; font-size: 0.8125rem; color: var(--muted); font-weight: 700; }
+
+
+  /* ---------- Half-folded screens: two segments, nothing on the crease ---------- */
+  /* Like a book (fold upright): the world on the left page (the 3D view is sized to it from script), every panel on the right page. */
+  body.fold-book .top { left: var(--seg1-x); padding-left: 12px; }
+  body.fold-book .brand { display: none !important; }
+  body.fold-book .icon-btn, body.fold-book .pill { min-width: min(2.125rem, 51px); padding: 0 6px; }
+  body.fold-book .vr { padding: 0 10px; }
+  body.fold-book #places { width: calc(var(--seg1-w) - 28px); }
+  body.fold-book #tray { left: var(--seg1-x); padding-left: 12px; }
+  body.fold-book #tray .tray-inner { max-height: calc(var(--seg1-h) * 0.56); }
+  body.fold-book #editSheet { left: var(--seg1-x); right: 0; width: auto; top: calc(env(safe-area-inset-top, 0px) + 66px); bottom: calc(var(--tray-h) + 8px); padding-left: 12px; display: flex; flex-direction: column; justify-content: flex-end; }
+  body.fold-book #editSheet .sheet { width: 100%; max-height: 100%; overflow: hidden auto; }
+  body.fold-book #stick { bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); }
+  body.fold-book .vert { right: calc(100% - var(--seg0-w) + 16px); bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); }
+  body.fold-book #toast { left: calc(var(--seg0-w) / 2); max-width: calc(var(--seg0-w) - 32px); }
+  body.fold-book .show-panels { left: calc(var(--seg1-x) + var(--seg1-w) / 2); }
+  body.fold-book .card-wrap { left: var(--seg1-x); }
+  /* On a table (fold across): the world stands up on the top half; the joystick, the tray and the edit sheet lie on the bottom half. */
+  body.fold-table #tray, body.fold-table #editSheet { top: calc(var(--seg1-y) + 10px); bottom: 0; left: calc(var(--gutter-l) + 118px); right: calc(var(--gutter-r) + 76px); width: auto;
+    padding-left: 0; padding-right: 0; display: flex; flex-direction: column; justify-content: flex-end; }
+  body.fold-table #editSheet { bottom: calc(env(safe-area-inset-bottom, 0px) + 10px); }
+  body.fold-table #tray .tray-inner { width: 100%; max-height: 100%; }
+  body.fold-table #editSheet .sheet, body.fold-table.edit-compact #editSheet .sheet { width: 100%; max-width: 800px; max-height: 100%; overflow: hidden auto; }
+  body.fold-table #editSheet .pane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body.fold-table #stick, body.fold-table .vert { bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); }
+  body.fold-table #menu, body.fold-table #places { max-height: calc(var(--seg0-h) - 76px); }
+  body.fold-table .card-wrap { top: var(--seg1-y); }
+
+  /* Scroll edge: a soft fade at the bottom while there's more to scroll (set from script) */
+  .more-below::after { content: ""; position: sticky; bottom: -1px; display: block; height: 26px; margin-top: -26px; grid-column: 1 / -1; pointer-events: none;
+    background: linear-gradient(rgba(35, 26, 22, 0), var(--panel-solid)); }
+  /* Press states: an instant tint while held (no waiting for release), easing back over 120 ms */
+  button { -webkit-tap-highlight-color: transparent; }
+  button:not(:disabled):active { box-shadow: inset 0 0 0 999px var(--press); transition-duration: 0s; }
+  .tool[aria-pressed="true"]:active, .chip[aria-pressed="true"]:active, .chip.primary:active, .seg button[aria-selected="true"]:active,
+  .cats button[aria-selected="true"]:active, .btn.primary:active, .vr:not(.off):active { box-shadow: inset 0 0 0 999px var(--press-dark); }
+  .swatch:not(:disabled):active { box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.18), inset 0 0 0 999px rgba(255, 255, 255, 0.2); }
+  html:not(.reduce-motion) button { transition: scale 120ms ease-out, box-shadow 120ms ease-out, background-color 120ms ease, color 120ms ease; }
+  html:not(.reduce-motion) button:not(:disabled):active { scale: 0.97; transition-duration: 0s; }
+  #stick:active .knob { background: #fff; }
+
+  /* Sliders: a thumb big enough for a fingertip, with the filled part of the track in celadon (--p is set from script) */
+  input[type="range"] { -webkit-appearance: none; appearance: none; height: 28px; background: transparent; cursor: pointer; --thumb: 20px; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--accent) var(--p, 50%), var(--edge) var(--p, 50%)); }
+  input[type="range"]::-moz-range-track { height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--accent) var(--p, 50%), var(--edge) var(--p, 50%)); }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: var(--thumb); height: var(--thumb); margin-top: calc(3px - var(--thumb) / 2); border-radius: 50%; background: var(--accent); border: 3px solid var(--panel-solid); box-shadow: 0 0 0 1px var(--accent); }
+  input[type="range"]::-moz-range-thumb { width: var(--thumb); height: var(--thumb); border-radius: 50%; background: var(--accent); border: 3px solid var(--panel-solid); box-sizing: border-box; }
+
+  /* Touch: bigger targets. Visuals grow a little; each tap area reaches 44 px by spreading into the gap around it
+     (never past the middle of the gap, so a tap always lands on the control you see). */
+  @media (pointer: coarse) {
+    .icon-btn, .pill, .seg button, .chip, .size button, .step button, .level-row button, .hide-panels, .swatch { position: relative; }
+    .icon-btn::after, .pill::after, .seg button::after, .chip::after, .size button::after, .step button::after, .level-row button::after, .hide-panels::after, .swatch::after { content: ""; position: absolute; }
+    .icon-btn::after, .pill::after { inset: -3px -2px; }
+    .seg button { min-height: 36px; }
+    .seg button::after { inset: -4px -1px; }
+    .chip { min-height: 36px; }
+    .chip::after { inset: -4px; }
+    .acts, .sheet-head, .m-skies, .chips-row { gap: 8px; }
+    .size button, .step button, .level-row button, .hide-panels { width: 2.25rem; height: 2.25rem; }
+    .size button::after, .step button::after, .level-row button::after, .hide-panels::after { inset: -4px; }
+    .step, .level-row, .size { gap: 8px; }
+    .pane { gap: 8px 14px; }
+    .swatch::after { inset: -6px -3px; }
+    input[type="range"] { height: 44px; --thumb: 28px; }
+    .tool { min-height: 50px; }
+  }
+  @media (pointer: coarse) {
+    @container tray (min-width: 25.5em) { #swatches { gap: 12px; } .swatch::after { inset: -6px; } }
+  }
+
+  /* Increased contrast: brighter secondary text, control outlines at 3:1, nearly solid panels */
+  @media (prefers-contrast: more) {
+    :root { --muted: #e2d5c6; --edge: rgba(243, 233, 220, 0.38); --line: rgba(243, 233, 220, 0.3); --panel: rgba(35, 26, 22, 0.97); }
+    .seg { background: rgba(0, 0, 0, 0.45); }
+    #stick { background: rgba(35, 26, 22, 0.75); }
+    .vert button { background: rgba(35, 26, 22, 0.9); }
+  }
+  /* Reduced transparency: solid panels, no blur */
+  @media (prefers-reduced-transparency: reduce) {
+    :root { --panel: #231a16; }
+    .glass { backdrop-filter: none; -webkit-backdrop-filter: none; }
+    #stick { background: rgba(35, 26, 22, 0.85); }
+    .vert button { background: #231a16; }
+  }
+  /* Reduced motion (the system setting, or Motion: reduced in the menu): no turning, no scaling, no white flash */
+  html.reduce-motion #flash.go { animation: flash-soft 380ms ease-out; }
+  @keyframes flash-soft { from { opacity: 0.22; } to { opacity: 0; } }
+  #blink { position: fixed; inset: 0; z-index: 3; background: #140e0b; opacity: 0; pointer-events: none; transition: opacity 90ms ease-out; }
+  #blink.on { opacity: 0.88; }
+
+</style>
+</head>
+<body>
+
+<canvas id="scene" aria-label="Clay world 3D view"></canvas>
+<div id="app">
+
+  <header class="top">
+    <div class="brand glass"><b>Endless Clay</b><span>x 0 · z 0</span></div>
+    <div class="actions glass">
+      <button class="icon-btn" id="undo" aria-label="Undo" title="Undo (Z)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+      </button>
+      <button class="icon-btn" id="redo" aria-label="Redo" title="Redo (Ctrl+Y)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+      </button>
+      <button class="pill" id="mode" title="Walk or fly (F)">Fly</button>
+      <button class="pill players" id="playersBtn" aria-label="Play together" title="Play together"><span class="dot"></span><span id="playersCount">Solo</span></button>
+      <button class="icon-btn" id="placesBtn" aria-label="Places and size" title="Places and size (H start · P next)" aria-expanded="false" aria-controls="places">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg>
+      </button>
+      <button class="icon-btn" id="menuBtn" aria-label="More" aria-expanded="false" aria-controls="menu">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+      <button class="pill vr" id="vr">Enter VR</button>
+      <button class="pill vr" id="ar" title="Mixed reality: your world on a real table">AR</button>
+      <div id="places" class="glass" hidden></div>
+      <input type="file" id="openFile" accept=".clay,application/json" hidden>
+      <div id="menu" class="glass" hidden>
+        <button id="saveNow">Save now</button>
+        <button id="snapBtn" data-tourhide>Snap to grid: off</button>
+        <button id="navBtn">Ground arrows: on</button>
+        <button id="walkBtn">View: behind you</button>
+        <button id="tourBtn">Tourist view: off</button>
+        <button id="envBtn">Scene: Day</button>
+        <button id="mediaBtn" data-tourhide>Phone link</button>
+        <button id="exportBtn" data-tourhide>Export clay (.obj)</button>
+        <button id="saveFileBtn" data-tourhide>Save world file</button>
+        <button id="openFileBtn" data-tourhide>Open world file</button>
+        <button id="viewBtn">View distance: Medium</button>
+        <button id="sound">Sound: on</button>
+        <button id="motionBtn">Motion: full</button>
+        <button id="respawn">Back to start</button>
+        <button id="showHelp">Controls</button>
+        <button id="reset" data-tourhide>New world</button>
+      </div>
+    </div>
+  </header>
+
+  <div id="stick" aria-label="Move"><div class="knob"></div></div>
+  <div class="vert"><button id="up">Up</button><button id="down">Down</button></div>
+
+  <section id="editSheet" hidden>
+    <div class="sheet glass">
+      <div class="sheet-head">
+        <strong id="selLabel">Cone</strong>
+        <button class="chip" id="partBtn" aria-pressed="false" title="Pick single parts inside a group">One part</button>
+        <button class="chip" id="multiBtn" aria-pressed="false" title="Tap more shapes to add them">Add more</button>
+        <button class="chip primary" id="doneBtn">Done</button>
+      </div>
+      <div class="seg" role="tablist" aria-label="Edit">
+        <button role="tab" data-pane="size" aria-selected="true">Size</button>
+        <button role="tab" data-pane="shape" aria-selected="false">Distort</button>
+        <button role="tab" data-pane="turn" aria-selected="false">Turn</button>
+        <button role="tab" data-pane="arrange" aria-selected="false">Arrange</button>
+        <button role="tab" data-pane="look" aria-selected="false" title="Photo skin and sound">Look</button>
+      </div>
+      <div class="pane" data-pane="size">
+        <div class="level">
+          <div class="level-top"><span>Size level</span><output id="levelOut">Level 7 of 25 · 80.0 cm</output></div>
+          <div class="level-row">
+            <button data-act="size-" aria-label="One level smaller (half the size)">−</button>
+            <input type="range" id="levelRange" min="1" max="25" step="1" value="7" aria-label="Size level, 1 to 25; each level is double the one before">
+            <button data-act="size+" aria-label="One level bigger (double the size)">+</button>
+          </div>
+        </div>
+        <div class="step"><span>Width</span><button data-act="wide-" aria-label="Narrower">−</button><button data-act="wide+" aria-label="Wider">+</button></div>
+        <div class="step"><span>Height</span><button data-act="tall-" aria-label="Shorter">−</button><button data-act="tall+" aria-label="Taller">+</button></div>
+        <div class="step"><span>Depth</span><button data-act="deep-" aria-label="Shallower">−</button><button data-act="deep+" aria-label="Deeper">+</button></div>
+        <div class="acts"><button class="chip" id="stickBtn" aria-pressed="false">Joystick resizes</button></div>
+      </div>
+      <div class="pane" data-pane="shape" hidden>
+        <div class="step"><span>Taper</span><button data-act="taper-" aria-label="Taper less">−</button><button data-act="taper+" aria-label="Taper more">+</button></div>
+        <div class="step"><span>Twist</span><button data-act="twist-" aria-label="Twist left">−</button><button data-act="twist+" aria-label="Twist right">+</button></div>
+        <div class="step"><span>Lean</span><button data-act="lean-" aria-label="Lean left">−</button><button data-act="lean+" aria-label="Lean right">+</button></div>
+        <div class="step"><span>Bulge</span><button data-act="bulge-" aria-label="Pinch waist">−</button><button data-act="bulge+" aria-label="Bulge out">+</button></div>
+      </div>
+      <div class="pane" data-pane="turn" hidden>
+        <div class="step"><span>Spin</span><button data-act="spin-" aria-label="Spin left">⟲</button><button data-act="spin+" aria-label="Spin right">⟳</button></div>
+        <div class="step"><span>Tilt</span><button data-act="tilt-" aria-label="Tilt back">−</button><button data-act="tilt+" aria-label="Tilt forward">+</button></div>
+        <div class="step"><span>Raise</span><button data-act="down" aria-label="Lower">▼</button><button data-act="up" aria-label="Raise">▲</button></div>
+        <div class="acts"><button class="chip" data-act="drop">Drop to ground</button></div>
+      </div>
+      <div class="pane skin-pane" data-pane="look" hidden>
+        <h3 class="look-h">Photo skin</h3>
+        <div class="skin-ui" data-where="sheet"></div>
+        <h3 class="look-h">Sound</h3>
+        <div class="sound-ui" id="soundUi"></div>
+      </div>
+      <div class="pane" data-pane="arrange" hidden>
+        <div class="sheet-colors" id="sheetSwatches" role="group" aria-label="Clay color for Recolor all"></div>
+        <div class="acts">
+          <button class="chip" data-act="recolor">Recolor all</button>
+          <button class="chip" data-act="crystal" id="crystalBtn" aria-pressed="false" title="See-through crystal, tinted by the shape's colours">Crystal</button>
+          <button class="chip" data-act="copy">Duplicate</button>
+          <button class="chip" data-act="clip" title="Copy the selected shapes (Ctrl+C)">Copy</button>
+          <button class="chip" data-act="gclip" title="Copy the whole group, kept grouped (Ctrl+Alt+C)">Group copy</button>
+          <button class="chip" data-act="paste" title="Paste where you point (Ctrl+V)">Paste</button>
+          <button class="chip" data-act="flipx">Flip ⇆</button>
+          <button class="chip" data-act="flipy">Flip ⇅</button>
+          <button class="chip" data-act="group">Group</button>
+          <button class="chip" data-act="ungroup">Ungroup</button>
+          <button class="chip danger" data-act="delete">Delete</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer id="tray">
+    <div class="tray-inner glass">
+      <div class="cats" role="tablist" aria-label="Control panel">
+        <button role="tab" id="cat-create" data-cat="create" aria-selected="true">Create &amp; Construct</button>
+        <button role="tab" id="cat-media" data-cat="media" aria-selected="false">Sounds &amp; Images</button>
+        <button role="tab" id="cat-social" data-cat="social" aria-selected="false">Social links</button>
+        <button role="tab" id="cat-phone" data-cat="phone" aria-selected="false">Phone</button>
+        <button class="hide-panels" id="hidePanels" aria-label="Hide panels (I)" title="Hide panels (I)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+      <div class="cat-body" data-catbody="create">
+      <div class="tray-head">
+        <div class="seg" role="tablist" aria-label="Tool set">
+          <button role="tab" id="tab-sculpt" data-tab="sculpt" aria-selected="true">Sculpt</button>
+          <button role="tab" id="tab-shapes" data-tab="shapes" aria-selected="false">Shapes</button>
+          <button role="tab" id="tab-paint" data-tab="paint" aria-selected="false">Paint</button>
+        </div>
+        <div class="size" role="group" aria-label="Brush size">
+          <button id="smaller" aria-label="Smaller brush">−</button>
+          <output id="sizeOut">0.45 m</output>
+          <button id="bigger" aria-label="Bigger brush">+</button>
+        </div>
+      </div>
+      <div class="tools" id="tools-sculpt" role="toolbar" aria-label="Sculpting tools"></div>
+      <div class="tools shapes" id="tools-shapes" role="toolbar" aria-label="Shape tools" hidden></div>
+      <div class="tools paint" id="tools-paint" role="toolbar" aria-label="Paint tools" hidden></div>
+      <div id="skinBar" hidden><div class="skin-ui" data-where="tray"></div></div>
+      <div class="row2">
+        <div class="colors"><div id="swatches" role="group" aria-label="Clay color"></div><span id="colorName">Terracotta</span></div>
+        <div class="acts cast-row" id="castRow" role="group" aria-label="Cast shapes" hidden><span class="muted">Cast</span><button class="chip" data-cast="solid" aria-pressed="true">Solid</button><button class="chip" data-cast="hollow" aria-pressed="false">Hollow</button></div>
+      </div>
+      </div>
+      <div class="cat-body scroll" data-catbody="media" hidden>
+        <h2 class="cat-h">Photo skins</h2>
+        <div class="skin-ui" data-where="lib"></div>
+        <div id="libUi"></div>
+      </div>
+      <div class="cat-body scroll" data-catbody="social" hidden><div id="linksUi"></div></div>
+      <div class="cat-body scroll" data-catbody="phone" hidden><div id="phoneUi"></div></div>
+    </div>
+    <div class="tour-bar glass" id="tourBar" hidden>
+      <div class="tour-text"><b>Tourist view</b><span id="tourWhy">Look round and explore.</span></div>
+      <button class="chip" id="tourScene">Scene</button>
+      <button class="chip" id="tourLeave">Leave tourist view</button>
+    </div>
+  </footer>
+  <button class="chip primary show-panels" id="showPanels" hidden>Show panels</button>
+  <div id="embeds" hidden><div id="embedsCam"></div></div>
+
+  <div id="blink" aria-hidden="true"></div>
+  <div id="toast" class="glass" role="status" hidden></div>
+
+  <section id="helpCard" class="card-wrap" hidden>
+    <div class="card" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <h1 id="helpTitle">Shape the world</h1>
+      <p>Everything here is clay. <b>Sculpt</b>: build, carve, groove, pull, slice, flatten, smooth, or draw coils of clay. <b>Shapes</b>: press clay into sphere, cone, cube, cylinder, torus or gem molds, lay bricks, then select, move, stretch, twist, flip, group or erase. Cast new molds <b>solid</b> or <b>hollow</b> (a thin shell) with the switch beside the colors. <b>Paint</b>: glaze spots, recolor whole shapes, or pick a color from the clay. <b>Crystal</b>, the last color, turns a shape or group into see-through glass; glaze or recolor it with any other color to stain it. <b>Skins</b> put photos on shapes: take one with the camera, choose one from your pictures, or snapshot what you see, then use the Skin tool or a selection’s Look page. Point the Skin tool at the land to lay a photo on the ground or a cliff. Fits wrap a photo across the front, all the way round (360°), onto each side, or straight through; the Photo arrows, turn and size buttons move the photo on a shape or a land skin. <b>Billboards</b> are framed windows on YouTube, Instagram, Facebook, TikTok, Threads and Snapchat posts: add a link in Social links, press Place and point. A billboard sticks to the shape you put it on or stays fixed in space, resizes to any shape (16:9, 9:16, square, post), and plays when you click it or by itself when you walk up (muted). In VR a click opens it on the flat screen with a Back to VR button, since headsets can’t show web players inside VR. <b>Phone link</b> lets your phone send photos, 360° skies, sounds and social links: skies become scenes, and sounds go on shapes (touch or loop), behind a scene, or onto your tools. The panel has four sides: Create &amp; Construct, Sounds &amp; Images, Social links and Phone; Tab or the ⌄ button hides it. <b>Tourist view</b> (menu) is for walking round and exploring without tools. People who join your room are tourists unless you turn on <b>Visitors can build</b> in Play together. The world goes on in every direction, generated as you explore, and it saves on this device.</p>
+      <div class="cols">
+        <div class="col">
+          <h2>Phone</h2>
+          <dl>
+            <dt>Drag</dt><dd>Look around</dd>
+            <dt>Tap</dt><dd>Use the tool once (place a mold, select a shape)</dd>
+            <dt>Hold</dt><dd>Keep sculpting, or drag a shape with Move</dd>
+            <dt>Stick</dt><dd>Walk. Turn on “Joystick resizes” to stretch a selected shape instead</dd>
+            <dt>Ground arrows</dt><dd>You stand in the middle of four arrows on the ground. Tap one to step that way; hold it to keep walking. A salmon arrow means clay is in the way</dd>
+            <dt>Stick (with arrows)</dt><dd>Up and down change your height (up lifts you into flying, down lands you); sideways turns</dd>
+            <dt>Menu</dt><dd>Ground arrows on/off · View: behind you or through your eyes · Tourist view · Motion: full or reduced</dd>
+            <dt>Foldable</dt><dd>Half-fold it like a book: the world on the left page, your tools on the right. Stand it on a table: the world on the top half, the controls on the bottom half</dd>
+          </dl>
+        </div>
+        <div class="col">
+          <h2>Keyboard &amp; mouse</h2>
+          <dl>
+            <dt>WASD</dt><dd>Move · Space/Shift fly or jump</dd>
+            <dt>Left click</dt><dd>Use tool · right drag looks</dd>
+            <dt>1–9 · V</dt><dd>Tools in this set · V next set (Sculpt, Shapes, Paint)</dd>
+            <dt>Ctrl+Y · N · X</dt><dd>Redo · snap to grid · flip selection</dd>
+            <dt>Ctrl+C · V</dt><dd>Copy · paste where you point (Ctrl+Alt+C copies the whole group)</dd>
+            <dt>= · −</dt><dd>Selected shape one size level up or down (each level doubles)</dd>
+            <dt>Wheel · [ ]</dt><dd>Brush size · C next color</dd>
+            <dt>Del · Esc</dt><dd>Delete shape · deselect</dd>
+            <dt>Z · F</dt><dd>Undo · walk or fly</dd>
+            <dt>H · P · G</dt><dd>Back to Start · next place · next size (Shift+1–4 marks a place)</dd>
+            <dt>I</dt><dd>Hide or show the panels (Tab moves between buttons)</dd>
+          </dl>
+        </div>
+        <div class="col">
+          <h2>Meta Quest</h2>
+          <dl>
+            <dt>Trigger</dt><dd>Use tool, or press a button on your left-wrist panel</dd>
+            <dt>L stick</dt><dd>Move · L grip jump/rise · L stick click sink</dd>
+            <dt>R stick</dt><dd>Snap turn, brush size</dd>
+            <dt>R grip + sticks</dt><dd>With a shape selected: right stick up/down steps one size level (each level doubles), sideways spins; left stick stretches width and height</dd>
+            <dt>A · B · X · Y</dt><dd>Next tool · next color · undo · walk/fly (hold Y to hide or show the wrist panel)</dd>
+            <dt>R stick click</dt><dd>Next place: Start, then each place you’ve marked</dd>
+          </dl>
+        </div>
+        <div class="col">
+          <h2>AR mode</h2>
+          <dl>
+            <dt>Place</dt><dd>Look at a table or the floor, then trigger (or tap on a phone) to set your world down</dd>
+            <dt>L stick</dt><dd>Slide the board across the endless world, a chunk at a time</dd>
+            <dt>R stick</dt><dd>Turn the board · push up/down to scale from tabletop to life size</dd>
+            <dt>Y</dt><dd>Pick the board up and place it somewhere else</dd>
+          </dl>
+        </div>
+      </div>
+      <p class="note">Places: mark up to four spots, each with your size (or the AR board’s scale), on the Places panel (the pin at the top, or the wrist panel’s Places tab). Start always brings you home at normal size. On a Quest, Endless Clay opens straight into the headset. Use “Switch to AR” or “Switch to VR” on the Room page of your wrist panel to move between your clay world and your own room. To play together, host or join a room before going in, since codes can’t be typed in the headset.</p>
+      <div class="go"><a class="privacy-link" href="privacy.html" target="_blank" rel="noopener">Privacy</a><button class="btn primary" id="helpClose">Start sculpting</button></div>
+    </div>
+  </section>
+
+  <input type="file" id="skyFile" accept="image/*" hidden>
+  <input type="file" id="soundFile" accept="audio/*" hidden>
+  <section id="watchCard" class="card-wrap" hidden>
+    <div class="card watch-card" role="dialog" aria-modal="true" aria-labelledby="watchTitle">
+      <h2 id="watchTitle">Billboard</h2>
+      <div class="watch-box"><iframe id="watchFrame" title="Billboard" allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe></div>
+      <div class="go"><button class="btn" id="watchClose">Close</button><button class="btn primary" id="watchBack">Back to VR</button></div>
+    </div>
+  </section>
+  <section id="camCard" class="card-wrap" hidden>
+    <div class="card cam-card" role="dialog" aria-modal="true" aria-label="Camera">
+      <video id="camVideo" playsinline muted></video>
+      <div class="go">
+        <button class="btn" id="camCancel">Cancel</button>
+        <button class="btn" id="camFlip">Switch camera</button>
+        <button class="btn primary" id="camSnap">Take photo</button>
+      </div>
+    </div>
+  </section>
+  <input type="file" id="photoFile" accept="image/*" hidden>
+  <div id="flash" hidden></div>
+  <section id="netCard" class="card-wrap" hidden>
+    <div class="card" role="dialog" aria-modal="true" aria-labelledby="netTitle">
+      <h1 id="netTitle">Play together</h1>
+      <p id="netIntro">Share one clay world live. Everyone sees edits, shapes and each other as they happen.</p>
+      <div class="row"><label class="field">Your name<input id="nameIn" maxlength="20" autocomplete="nickname"></label></div>
+      <div id="netCode" hidden>
+        <div id="netIdle">
+          <div class="go" style="justify-content:flex-start"><button class="btn primary" id="hostBtn">Host a room</button></div>
+          <div class="row" style="margin-top:14px">
+            <label class="field">Room code<input id="codeIn" class="code-in" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE"></label>
+            <button class="btn" id="joinBtn">Join</button>
+          </div>
+          <p class="note">Rooms connect players directly through a free public relay. Your own world is put aside while you’re a guest and comes back when you leave.</p>
+        </div>
+        <div id="netLive" hidden>
+          <div class="status">Room code</div>
+          <div class="big-code" id="codeOut">-----</div>
+        </div>
+      </div>
+      <div class="acts visit-row" id="visitRow"><button class="chip" id="visitBtn" aria-pressed="false">Visitors can build</button><span class="note">Off: people who join your room are tourists. They explore but can’t change your world.</span></div>
+      <p class="note" id="visitNote" hidden></p>
+      <div id="netNone" hidden><p class="note">Multiplayer needs a network connection. It didn’t load on this page.</p></div>
+      <div class="status" id="netStatus" style="margin-top:12px"></div>
+      <ul id="peerList"></ul>
+      <div class="go">
+        <button class="btn" id="resyncBtn" hidden>Reload shared world</button>
+        <button class="btn danger" id="leaveBtn" hidden>Leave room</button>
+        <button class="btn primary" id="netClose">Close</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script src="lib/three.min.js"></script>
+<script src="lib/peerjs.min.js"></script>
+<script src="lib/qrcode.js"></script>
+<script src="js/config.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/model.js"></script>
+<script src="js/net.js"></script>
+<script src="js/media.js"></script>
+<script src="js/game.js"></script>
+<script>
+  // Offline support: keep the app's files on the headset after the first launch.
+  if ('serviceWorker' in navigator) window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () { }); });
+</script>
+
+</body>
+</html>

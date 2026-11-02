@@ -1,0 +1,57 @@
+# Builds the Endless Clay Quest app (APK) on GitHub's machines, signs it with your key, and checks the signature
+# matches the app link the website publishes (.well-known/assetlinks.json). A tag like v1.0.0 also publishes it as a
+# GitHub Release, which SideQuest's GitHub integration picks up.
+#
+# Needs two repository secrets (Settings > Secrets and variables > Actions):
+#   ANDROID_KEYSTORE_BASE64   the signing key, base64-encoded (from keystore-base64.txt)
+#   ANDROID_KEYSTORE_PASSWORD its password (from keystore-password.txt)
+name: Build Quest APK
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Compile (unsigned)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+      - name: Sign
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then echo "::error::Add the ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD repository secrets first."; exit 1; fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/android.keystore"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -p -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/android.keystore" --ks-key-alias android --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out endless-clay.apk "$RUNNER_TEMP/aligned.apk"
+          rm -f "$RUNNER_TEMP/android.keystore"
+          "$BT/apksigner" verify --print-certs endless-clay.apk | tee cert.txt
+      - name: Check the signature matches the website's app link
+        run: |
+          WANT=$(python3 -c "import json;print(json.load(open('.well-known/assetlinks.json'))[0]['target']['sha256_cert_fingerprints'][0].replace(':','').lower())")
+          GOT=$(grep -i "SHA-256 digest" cert.txt | head -1 | awk '{print $NF}' | tr -d ':' | tr 'A-F' 'a-f')
+          echo "app link: $WANT"; echo "APK:      $GOT"
+          if [ "$WANT" != "$GOT" ]; then echo "::error::The APK's signing key doesn't match .well-known/assetlinks.json, so the app wouldn't open. Check the keystore secret."; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: endless-clay-apk
+          path: endless-clay.apk
+      - name: Publish as a GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: endless-clay.apk
+          generate_release_notes: true
