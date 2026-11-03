@@ -2441,6 +2441,24 @@
   panel.tex = new THREE.CanvasTexture(panel.canvas);
   panel.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.3 * PH / PW), new THREE.MeshBasicMaterial({ map: panel.tex, transparent: true, side: THREE.DoubleSide, forceSinglePass: true }));
   panel.mesh.position.set(0, 0.11, 0.02); panel.mesh.rotation.x = -0.8;
+  // While the panel is hidden, a small tab stays on the wrist: point at it and pull the trigger to bring the panel back.
+  var TW = 512, TH = 160;
+  panel.tab = { canvas: document.createElement('canvas'), hover: false, drawn: null };
+  panel.tab.canvas.width = TW; panel.tab.canvas.height = TH;
+  panel.tab.tex = new THREE.CanvasTexture(panel.tab.canvas);
+  panel.tab.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.1, 0.1 * TH / TW), new THREE.MeshBasicMaterial({ map: panel.tab.tex, transparent: true, side: THREE.DoubleSide, forceSinglePass: true }));
+  panel.tab.mesh.position.set(0, 0.06, 0.02); panel.tab.mesh.rotation.x = -0.8; panel.tab.mesh.visible = false;
+  function drawPanelTab() {
+    var t = panel.tab; if (t.drawn === t.hover) return; t.drawn = t.hover;
+    var g = t.canvas.getContext('2d'), F = '"Bricolage Grotesque", system-ui, sans-serif';
+    g.clearRect(0, 0, TW, TH);
+    rr(g, 4, 4, TW - 8, TH - 8, 40); g.fillStyle = t.hover ? 'rgba(66,52,44,0.97)' : 'rgba(35,26,22,0.95)'; g.fill();
+    g.lineWidth = t.hover ? 8 : 5; g.strokeStyle = '#8fc2b0'; g.stroke();
+    g.fillStyle = '#f3e9dc'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '700 56px ' + F; g.fillText('Show panel', TW / 2, 64);
+    g.fillStyle = '#bfae9c'; g.font = '500 32px ' + F; g.fillText('or hold Y', TW / 2, 118);
+    t.tex.needsUpdate = true;
+  }
   // The wrist panel turns between four categories (like faces of a prism), each with its own pages.
   var CATS = [['create', 'Create & Construct', [['sculpt', 'Sculpt'], ['shapes', 'Shapes'], ['paint', 'Paint'], ['edit', 'Edit'], ['places', 'Places'], ['room', 'Room']]],
     ['media', 'Sounds & Images', [['skin', 'Skins'], ['sounds', 'Sounds'], ['scenes', 'Scenes']]], ['social', 'Social links', [['links', 'Links']]], ['phone', 'Phone', [['phone', 'Phone']]]];
@@ -2589,6 +2607,7 @@
   }
   function setPanelShown(on) {
     panel.shown = on; panel.mesh.visible = on; panel.dirty = true;
+    panel.tab.hover = false; panel.tab.mesh.visible = !on; if (!on) drawPanelTab();
     toast(on ? 'Wrist panel back' : 'Wrist panel hidden. Hold Y to bring it back.');
   }
   function rr(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
@@ -2643,7 +2662,7 @@
   var hands = [0, 1].map(function (i) {
     var ctrl = renderer.xr.getController(i); rig.add(ctrl);
     var h = { ctrl: ctrl, src: null, hand: '', prev: [], use: null, onPanel: false, blockTrigger: false, model: makeHandModel(), preview: makePreview(), snapReady: true };
-    ctrl.addEventListener('connected', function (e) { h.src = e.data; h.hand = e.data.handedness; ctrl.add(h.model); if (h.hand === 'left') ctrl.add(panel.mesh); });
+    ctrl.addEventListener('connected', function (e) { h.src = e.data; h.hand = e.data.handedness; ctrl.add(h.model); if (h.hand === 'left') { ctrl.add(panel.mesh); ctrl.add(panel.tab.mesh); } });
     ctrl.addEventListener('selectstart', function () {
       if (!ar.active || !h.src || h.src.gamepad) return;
       if (!ar.placed) { placeBoard(); return; }
@@ -2652,7 +2671,7 @@
     ctrl.addEventListener('selectend', function () { if (h.use && !(h.src && h.src.gamepad)) { endUse(h.use); h.use = null; } });
     ctrl.addEventListener('disconnected', function () {
       if (h.use) { endUse(h.use); h.use = null; }
-      h.src = null; ctrl.remove(h.model); if (panel.mesh.parent === ctrl) ctrl.remove(panel.mesh); h.preview.visible = false;
+      h.src = null; ctrl.remove(h.model); if (panel.mesh.parent === ctrl) { ctrl.remove(panel.mesh); ctrl.remove(panel.tab.mesh); } h.preview.visible = false;
     });
     return h;
   });
@@ -2691,8 +2710,10 @@
         if (edge(5)) { h.yAt = now; h.yHeld = false; }
         if (pressed(5) && !h.yHeld && now - h.yAt > 600) { h.yHeld = true; setPanelShown(!panel.shown); }
         if (!pressed(5) && h.prev[5] && !h.yHeld) { if (A) { ar.placed = false; panel.dirty = true; } else toggleFly(); }
-        if (!A && pressed(1)) { if (state.fly) mv.y += 1; else mv.jump = edge(1); } // one jump per squeeze: a resting grip shouldn't hop you forever
-        if (!A && pressed(3) && state.fly) mv.y -= 1;
+        // Flying: grip rises, stick click sinks. Walking: click the left stick to jump. (Not the grip: a hand squeezes it
+        // without meaning to, pressing Y for one, and every squeeze was a hop.)
+        if (!A && state.fly) { if (pressed(1)) mv.y += 1; if (pressed(3)) mv.y -= 1; }
+        if (!A && !state.fly && edge(3)) mv.jump = true;
       } else {
         if (shaping) { sh[2] = sx; sh[3] = -sy; }
         else {
@@ -2710,6 +2731,12 @@
       cO.copy(rayO); if (A) cO.applyMatrix4(ar.inv);
       var touching = soundShapeAt(cO); if (touching && touching !== h.touching) touchSound(touching); h.touching = touching;
       h.onPanel = false;
+      if (h.hand === 'right' && panel.tab.mesh.parent && panel.tab.mesh.visible) {
+        panelRay.set(rayO, rayD);
+        var th = panelRay.intersectObject(panel.tab.mesh, false)[0];
+        if (th !== undefined) { h.onPanel = true; laser.scale.z = th.distance / unit; h.preview.visible = false; if (edge(0) && !h.use) { ensureAudio(); setPanelShown(true); sound('tap'); pulse(h)(0.3, 20); } }
+        if (panel.tab.hover !== (th !== undefined)) { panel.tab.hover = th !== undefined; drawPanelTab(); }
+      }
       if (h.hand === 'right' && panel.mesh.parent && panel.mesh.visible) {
         panelRay.set(rayO, rayD);
         var ph = panelRay.intersectObject(panel.mesh, false)[0];
