@@ -1582,6 +1582,98 @@
     var ov = objViews.get(r.at); if (!ov) return false;
     pos.fromArray(r.p).applyMatrix4(ov.group.matrix); quat.copy(ov.group.quaternion).multiply(bbQ.fromArray(r.q)); return true;
   }
+  // ---------- Portal arch: a ring that leads to the memory palace (its own app, palace/ on this site) ----------
+  // You place it yourself (Places ▸ Place portal); walking through it saves your world and opens the palace, which
+  // brings you back here, standing in front of it. In someone else's room it's closed: a palace belongs to its owner.
+  var PORTAL_R = 1.3, PORTAL_Y = 1.6, HANDOFF = 'palace.handoff';
+  var portalViews = new Map(), seenPortalVer = -1, portalT0 = performance.now(), lastPortalNote = 0;
+  var portalArchMat = new THREE.MeshLambertMaterial({ color: new THREE.Color('#4e8c7a') }), portalStoneMat = new THREE.MeshLambertMaterial({ color: new THREE.Color('#8a8478') });
+  function portalSurface() {
+    return new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 }, uOpen: { value: 1 } }, transparent: true, side: THREE.DoubleSide, depthWrite: false,
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: [
+        'uniform float uTime; uniform float uOpen; varying vec2 vUv;',
+        'void main() {',
+        '  vec2 p = vUv * 2.0 - 1.0; float r = length(p);',
+        '  float w = sin(r * 22.0 - uTime * 3.0) * 0.5 + sin(r * 9.0 + uTime * 1.7 + p.x * 3.0) * 0.3 + sin((p.x + p.y) * 7.0 - uTime * 2.3) * 0.2;',
+        '  vec3 c = mix(vec3(0.05, 0.25, 0.30), vec3(0.50, 0.88, 0.92), 0.5 + 0.5 * w) + smoothstep(0.7, 1.0, r) * vec3(0.55, 0.85, 0.95) + pow(max(w, 0.0), 6.0) * 0.6;',
+        '  c = mix(vec3(0.38, 0.36, 0.33) + 0.04 * w, c, uOpen);',
+        '  gl_FragColor = vec4(c, (1.0 - smoothstep(0.96, 1.0, r)) * mix(1.0, 0.92, uOpen));',
+        '}'].join('\n')
+    });
+  }
+  function makePortalView() {
+    var g = new THREE.Group(), surf = portalSurface();
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(PORTAL_R + 0.12, 0.16, 12, 48), portalArchMat); ring.position.y = PORTAL_Y;
+    var disc = new THREE.Mesh(new THREE.CircleGeometry(PORTAL_R, 48), surf); disc.position.y = PORTAL_Y; disc.renderOrder = 2;
+    var plinth = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.3, 1.2), portalStoneMat); plinth.position.y = 0.05;
+    var step = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.18, 2.2), portalStoneMat); step.position.y = -0.02;
+    g.add(step, plinth, ring, disc); worldRoot.add(g);
+    return { group: g, surf: surf, side: null };
+  }
+  function portalOpen() { return !(net && !hosting); }
+  function myPortal() { var r = null; studio.portals.forEach(function (x) { if (!r) r = x; }); return r; }
+  // Where you stand in front of a portal: dist m out from its face, facing it (toward) or away from it.
+  function portalSpot(rec, dist) { return { x: rec.p[0] + Math.sin(rec.yaw) * dist, z: rec.p[2] + Math.cos(rec.yaw) * dist }; }
+  function standAt(x, z, yaw) {
+    rig.updateMatrixWorld(true);
+    if (renderer.xr.isPresenting) snapTurn(yaw - headYaw()); else { rig.rotation.y = yaw; camera.rotation.set(pitch, 0, 0); }
+    rig.updateMatrixWorld(true); var h = headWorld(tmpV2);
+    rig.position.x += x - h.x; rig.position.z += z - h.z; rig.position.y = Math.max(terrain.surfaceY(x, z), rig.position.y - 50) + 0.05; vy = 0;
+    var top = rig.position.y; while (solid(x, rig.position.y + 0.02, z) && rig.position.y < top + 40) rig.position.y += 0.25; // not inside a build
+    streamTerrain(300);
+  }
+  function placePortal() {
+    if (!canEdit()) return;
+    rig.updateMatrixWorld(true);
+    var h = headWorld(tmpV2), yaw = headYaw(), x = h.x - Math.sin(yaw) * 3, z = h.z - Math.cos(yaw) * 3, cur = myPortal();
+    edit({ t: 'portal', d: { id: cur ? cur.id : uid('pt'), p: [r3(x), r3(Math.max(terrain.surfaceY(x, z), rig.position.y - 0.5)), r3(z)], yaw: r3(yaw), to: 'palace' } });
+    sound('brick'); toast(cur ? 'Portal moved here. Walk through it to reach your memory palace.' : 'Portal placed. Walk through it to reach your memory palace.');
+    refreshPlaces(); panel.dirty = true;
+  }
+  function goToPortal() {
+    var rec = myPortal(); if (!rec) { toast('No portal yet: Place portal first.'); return; }
+    var s = portalSpot(rec, 2.6); standAt(s.x, s.z, rec.yaw + Math.PI); sound('tap'); toast('At the portal');
+  }
+  async function goThroughPortal(rec) {
+    if (portalGoing) return;
+    if (!portalOpen()) { if (performance.now() - lastPortalNote > 4000) { lastPortalNote = performance.now(); toast('This portal is private: it leads to its owner’s memory palace.'); } return; }
+    portalGoing = true; sound('tap');
+    try { await saveLocal(false); } catch (e) { }
+    try { localStorage.setItem(HANDOFF, JSON.stringify({ from: 'clay', at: Date.now(), mode: xrMode, back: location.pathname.split('/').pop() || '', debug: DEBUG })); } catch (e) { }
+    location.href = 'palace/' + (DEBUG ? '?debug&via=clay' : '?via=clay');
+  }
+  var portalGoing = false;
+  function syncPortals(now) {
+    if (studio.portalVer !== seenPortalVer) {
+      seenPortalVer = studio.portalVer;
+      portalViews.forEach(function (v, id) { if (!studio.portals.has(id)) { worldRoot.remove(v.group); v.surf.dispose(); portalViews.delete(id); } });
+      studio.portals.forEach(function (rec, id) {
+        var v = portalViews.get(id); if (!v) { v = makePortalView(); portalViews.set(id, v); }
+        v.group.position.fromArray(rec.p); v.group.rotation.set(0, rec.yaw, 0); v.group.updateMatrixWorld(true); v.side = null; v.rec = rec;
+      });
+    }
+    if (!portalViews.size) return;
+    var t = (now - portalT0) / 1000, open = portalOpen() ? 1 : 0;
+    rig.updateMatrixWorld(true); var h = headWorld(tmpV2);
+    portalViews.forEach(function (v) {
+      v.surf.uniforms.uTime.value = t; v.surf.uniforms.uOpen.value = open;
+      if (ar.active) { v.side = null; return; }
+      var rec = v.rec, dx = h.x - rec.p[0], dz = h.z - rec.p[2], c = Math.cos(rec.yaw), sn = Math.sin(rec.yaw);
+      var lx = dx * c - dz * sn, lz = dx * sn + dz * c, ly = h.y - rec.p[1] - PORTAL_Y * 0.9;
+      var side = lz > 0 ? 1 : -1, inside = Math.hypot(lx, ly / Math.max(state.pscale, 1)) < PORTAL_R && Math.abs(lz) < 1.2;
+      if (v.side !== null && side !== v.side && inside) goThroughPortal(rec);
+      v.side = Math.abs(lz) < 1.2 ? side : null;
+    });
+  }
+  // Back from the palace: stand in front of the portal, facing away from it, and go straight back into the headset.
+  function arriveFromPalace() {
+    var rec = myPortal(); if (!rec) return;
+    var s = portalSpot(rec, 2.2); standAt(s.x, s.z, rec.yaw);
+    toast('Back from your memory palace');
+  }
+
   function syncBoards() {
     if (studio.boardVer !== seenBoardVer) {
       seenBoardVer = studio.boardVer;
@@ -2549,15 +2641,16 @@
     } else if (P === 'places') {
       grid([{ label: 'Start: ' + placeDesc(startPlace()), run: function () { goPlace(0); } }, { label: 'Next place ▸ (R stick click)', run: cyclePlace }], 2, 96, 76);
       for (var pi = 1; pi <= MAX_PLACES; pi++) (function (i) {
-        var pt = places[i - 1], y = 180 + (i - 1) * 76, cur = placeIdx === i;
+        var pt = places[i - 1], y = 180 + (i - 1) * 70, cur = placeIdx === i;
         B.push({ x: 8, y: y, w: 520, h: 68, label: 'Place ' + i + ': ' + (pt ? placeDesc(pt) : 'empty'), info: !pt, active: cur && !!pt, run: pt ? function () { goPlace(i); } : null });
         B.push({ x: 536, y: y, w: 236, h: 68, label: pt ? 'Mark again' : 'Mark here', run: function () { markPlace(i); } });
         B.push({ x: 780, y: y, w: 236, h: 68, label: 'Clear', info: !pt, run: function () { clearPlace(i); } });
       })(pi);
       var sizes = ar.active ? AR_SCALES : SIZES, curS = ar.active ? ar.scale : state.pscale;
       grid(sizes.map(function (s) { return { label: s[0], active: Math.abs(s[1] - curS) < 1e-6, run: function () { setScaleValue(s[1]); } }; })
-        .concat([{ label: 'Smaller', run: function () { setScaleValue(curS / 1.25); } }, { label: 'Bigger', run: function () { setScaleValue(curS * 1.25); } }]), ar.active ? 5 : 6, 492, 72);
-      B.push({ x: 8, y: 572, w: PW - 16, h: 60, label: (ar.active ? 'Board scale ' : 'Your size ') + scaleName(curS, ar.active), info: true });
+        .concat([{ label: 'Smaller', run: function () { setScaleValue(curS / 1.25); } }, { label: 'Bigger', run: function () { setScaleValue(curS * 1.25); } }]), ar.active ? 5 : 6, 462, 64);
+      B.push({ x: 8, y: 532, w: PW - 16, h: 50, label: (ar.active ? 'Board scale ' : 'Your size ') + scaleName(curS, ar.active), info: true });
+      if (!ar.active) grid([{ label: myPortal() ? 'Go to portal' : 'No portal yet', info: !myPortal(), run: myPortal() ? goToPortal : null }, { label: myPortal() ? 'Move portal here' : 'Place portal here', run: placePortal }], 2, 590, 60);
     } else if (P === 'edit') {
       if (!ids.length) { B.push({ x: 8, y: 110, w: PW - 16, h: 120, label: 'Pick the Select tool and point at a shape', info: true }); grid([{ label: 'Go to Shapes', run: function () { panel.page = 'shapes'; } }], 1, 250, 80); }
       else {
@@ -2818,14 +2911,18 @@
     var opts = mode === 'immersive-ar'
       ? { optionalFeatures: ['local-floor', 'hit-test', 'dom-overlay'], domOverlay: { root: $('#app') } }
       : { optionalFeatures: ['local-floor', 'bounded-floor'] };
+    if (xrAsking) return; // one request at a time (a granted session and the installed app's own start can race)
+    xrAsking = true;
     navigator.xr.requestSession(mode, opts).then(function (s) {
       s.addEventListener('end', onExitXR);
       return renderer.xr.setSession(s).then(function () {
         xrMode = mode; prefs.mode = mode; savePrefs();
         if (mode === 'immersive-ar') { enterAR(s); arBtn.textContent = 'Exit AR'; } else { onEnterVR(); vrBtn.textContent = 'Exit VR'; }
       });
-    }).catch(function () { toast('Tap ' + (mode === 'immersive-ar' ? 'AR' : 'Enter VR') + ' at the top to start.'); });
+    }).catch(function () { toast('Tap ' + (mode === 'immersive-ar' ? 'AR' : 'Enter VR') + ' at the top to start.'); })
+      .then(function () { xrAsking = false; });
   }
+  var xrAsking = false;
   vrBtn.addEventListener('click', function () { startXR('immersive-vr'); });
   arBtn.addEventListener('click', function () { startXR('immersive-ar'); });
   // Taps on the on-screen tray during phone AR shouldn't also sculpt the board behind it.
@@ -2994,6 +3091,10 @@
       else row.append(elt('span'), elt('span'));
       placesEl.append(row);
     })(i);
+    var pr = elt('div', 'pl-row'), hasPortal = !!myPortal();
+    pr.append(elt('span', 'pl-name', 'Portal'), elt('small', '', hasPortal ? 'To your memory palace' : 'Not placed yet'), chip('Go', hasPortal ? goToPortal : null),
+      chip(hasPortal ? 'Move here' : 'Place here', canEdit() ? placePortal : null), elt('span'));
+    placesEl.append(pr);
     var sz = elt('div', 'pl-size'), cur = ar.active ? ar.scale : state.pscale;
     sz.append(elt('span', '', ar.active ? 'Board scale' : 'Your size'));
     (ar.active ? AR_SCALES : SIZES).forEach(function (s) { sz.append(chip(s[0], function () { setScaleValue(s[1]); }, { pressed: Math.abs(s[1] - cur) < 1e-6 })); });
@@ -3177,7 +3278,7 @@
     if (ar.active) { arFrame(dt, now); arStream(5); }
     else { if (renderer.xr.isPresenting) vrFrame(dt, now); else flatFrame(dt, now); streamTerrain(renderer.xr.isPresenting ? 4 : 7); }
     sky.position.copy(headWorld(tmpV));
-    syncObjects(); syncBoards(); syncLive(now);
+    syncObjects(); syncBoards(); syncPortals(now); syncLive(now);
     if (now - lastCoords > 250) { lastCoords = now; showCoords(); syncMotion(); } // syncMotion also catches a Reduce Motion change the browser didn't announce
     syncBoxes();
     syncAvatars(dt);
@@ -3213,8 +3314,14 @@
     photos: function () { return photos.map(function (p) { return { id: p.id, size: p.d.length }; }); }, snapshot: function () { return snapshotView(); }, renderer: renderer,
     // Simulated controllers: drive the VR / AR controller code without a headset.
     xr: { hands: hands, panel: panel, rig: rig, ar: ar, vr: vrFrame, arStep: function (dt, now) { applyPlate(); handsFrame(dt, now); syncObjects(); }, draw: drawPanel, state: state, sel: function (ids) { setSelection(ids); } } };
+  if (DEBUG) window.kilnworksDebug.portal = { place: placePortal, go: goToPortal, rec: function () { return myPortal(); }, where: function () { rig.updateMatrixWorld(true); var h = headWorld(new THREE.Vector3()); return [h.x, h.y, h.z, headYaw()]; } };
 
   // ---------- Boot ----------
+  // Arriving through a portal from another VR page: the browser may grant a session we can start without a tap.
+  var granted = false, booted = false;
+  if (navigator.xr && navigator.xr.addEventListener) navigator.xr.addEventListener('sessiongranted', function () {
+    granted = true; if (booted && !renderer.xr.isPresenting) startXR(prefs.mode === 'immersive-ar' ? 'immersive-ar' : 'immersive-vr');
+  });
   (async function boot() {
     await loadMedia(); mediaLoaded = true; setEnv(state.env);
     if (prefs.linkOn) startLink();
@@ -3227,6 +3334,10 @@
     // Installed as a Quest app: launching from the app icon counts as the tap WebXR needs,
     // so open straight into the headset, in whichever mode (VR or AR) was used last.
     var installed = typeof window.getDigitalGoodsService !== 'undefined' || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
-    if (installed && navigator.xr) { $('#helpCard').hidden = true; startXR(prefs.mode === 'immersive-ar' ? 'immersive-ar' : 'immersive-vr'); }
+    var fromPalace = /[?&]via=palace\b/.test(location.search);
+    if (fromPalace) { arriveFromPalace(); $('#helpCard').hidden = true; try { history.replaceState(null, '', location.pathname + (DEBUG ? '?debug' : '')); } catch (e) { } }
+    booted = true;
+    if (granted) { $('#helpCard').hidden = true; startXR(prefs.mode === 'immersive-ar' ? 'immersive-ar' : 'immersive-vr'); }
+    else if (installed && navigator.xr) { $('#helpCard').hidden = true; startXR(prefs.mode === 'immersive-ar' ? 'immersive-ar' : 'immersive-vr'); }
   })();
 })();

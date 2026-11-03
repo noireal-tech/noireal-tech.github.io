@@ -39,7 +39,14 @@
   }
   // Things placed in the world that are not shapes: land skins and billboards. Each kind has its map, a check,
   // a version the renderer watches, and its key in restore ops and saves.
-  var PLACED = { decal: { map: 'decals', clean: function (d) { return landSkin(d); }, ver: 'decalVer', key: 'dc' }, board: { map: 'boards', clean: billboard, ver: 'boardVer', key: 'bb' } };
+  // A portal arch: a doorway to another app on the same site (the memory palace), standing at p, facing yaw.
+  function portal(d) {
+    if (!d || typeof d.id !== 'string') return null;
+    var p = vec(d.p); if (!p) return null;
+    return { id: d.id, p: p, yaw: num(d.yaw, -1000, 1000, 0), to: 'palace' };
+  }
+  var PLACED = { decal: { map: 'decals', clean: function (d) { return landSkin(d); }, ver: 'decalVer', key: 'dc' }, board: { map: 'boards', clean: billboard, ver: 'boardVer', key: 'bb' },
+    portal: { map: 'portals', clean: portal, ver: 'portalVer', key: 'pt' } };
   // Ops and records come from the network and from files, so they are checked before anything uses them: a bad one
   // is skipped (the same way on every machine) rather than throwing halfway or locking up the terrain.
   var WARPS = ['taper', 'twist', 'lean', 'bulge'], BRUSHES = { add: 5, carve: 4, smooth: 4, paint: 5, groove: 7, flat: 7, block: 4, coil: 8, slice: 7 };
@@ -74,6 +81,7 @@
     this.skins = new Map(); // skin id → photo (data URL)
     this.decals = new Map(); this.decalVer = 0; // land skins
     this.boards = new Map(); this.boardVer = 0; // billboards
+    this.portals = new Map(); this.portalVer = 0; // portal arches
     this.sounds = new Map(); // sound id → recording (data URL)
     this.undoStack = []; this.redoStack = [];
     this.action = null;
@@ -170,10 +178,10 @@
       case 'skxf': // move, turn or zoom the photo on shapes
         ids(op.ids).forEach(function (id) { var x = self.objects.get(id); if (x) { x.sx = skinXf(op.x); x.xver++; } });
         break;
-      case 'decal': case 'board': // put down (or change) a land skin or a billboard
+      case 'decal': case 'board': case 'portal': // put down (or change) a land skin, a billboard or a portal arch
         this._putPlaced(op.t, op.d);
         break;
-      case 'undecal': case 'unboard':
+      case 'undecal': case 'unboard': case 'unportal':
         this._dropPlaced(op.t.slice(2), op.id);
         break;
       case 'wear': // put a skin on shapes (sk null takes it off)
@@ -248,8 +256,8 @@
     if (own) this.begin();
     var who = TOUCHES[op.t];
     (who ? who(op) : []).forEach(function (id) { if (typeof id === 'string') self.capture(id); });
-    if ((op.t === 'decal' || op.t === 'board') && PLACED[op.t].clean(op.d)) this.capturePlaced(op.t, op.d.id);
-    else if ((op.t === 'undecal' || op.t === 'unboard') && this[PLACED[op.t.slice(2)].map].has(op.id)) this.capturePlaced(op.t.slice(2), op.id);
+    if ((op.t === 'decal' || op.t === 'board' || op.t === 'portal') && PLACED[op.t].clean(op.d)) this.capturePlaced(op.t, op.d.id);
+    else if ((op.t === 'undecal' || op.t === 'unboard' || op.t === 'unportal') && this[PLACED[op.t.slice(2)].map].has(op.id)) this.capturePlaced(op.t.slice(2), op.id);
     this.apply(op);
     if (own) this.end();
   };
@@ -314,7 +322,7 @@
     this.objects.forEach(function (o) { objs.push(self.record(o, false)); });
     var sk = {}; this.skins.forEach(function (d, id) { sk[id] = d; });
     var au = {}; this.sounds.forEach(function (d, id) { au[id] = d; });
-    var head = new TextEncoder().encode(JSON.stringify({ v: 4, seed: t.seed, keys: keys, objs: objs, sk: sk, dc: Array.from(this.decals.values()), bb: Array.from(this.boards.values()), au: au, x: extra || null }));
+    var head = new TextEncoder().encode(JSON.stringify({ v: 4, seed: t.seed, keys: keys, objs: objs, sk: sk, dc: Array.from(this.decals.values()), bb: Array.from(this.boards.values()), pt: Array.from(this.portals.values()), au: au, x: extra || null }));
     var on = OBJ_N * OBJ_N * OBJ_N, out = new Uint8Array(4 + head.length + keys.length * 8192 + objs.length * on * 2), p;
     out[0] = head.length >>> 24; out[1] = (head.length >>> 16) & 255; out[2] = (head.length >>> 8) & 255; out[3] = head.length & 255;
     out.set(head, 4); p = 4 + head.length;
