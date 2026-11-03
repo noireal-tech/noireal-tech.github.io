@@ -95,7 +95,12 @@
   function toolId() { return TOOLS[state.tool].id; }
 
   // ---------- Studio ----------
-  var palLinear = PALETTE.map(function (p) { var c = new THREE.Color(p[1]); return [c.r, c.g, c.b]; });
+  // Extra glazes after the swatches: architectural finishes a world file can use (a build made elsewhere, say), not
+  // offered on the swatches. They follow the swatches' indices, so worlds painted with the swatches don't change.
+  var GLAZES = [['Granite', '#8a8478'], ['Lime plaster', '#ede8dd'], ['Gold luster', '#b8933a'], ['Roof tile', '#4a4e52'], ['Dark timber', '#2b2623'],
+    ['Fired clay', '#b0603a'], ['Pale clay', '#d9b8a2'], ['Pale slate', '#a9b6c4'], ['Indigo slate', '#2f4a6b'], ['Verdigris', '#4e8c7a'], ['Raw clay', '#9c7a54'],
+    ['Buff', '#cdb78e'], ['Gravel', '#bdb6a6'], ['Garden', '#6f8a55']];
+  var palLinear = PALETTE.concat(GLAZES).map(function (p) { var c = new THREE.Color(p[1]); return [c.r, c.g, c.b]; });
   // Shapes' colours carry how see-through they are as crystal: clear crystal is nearly invisible glass, dyes are stained glass.
   var palShapes = palLinear.map(function (c, i) { return c.concat(i === CRYSTAL ? 0.16 : 0.55); });
   var studio = new ClayStudio.Studio({ palette: palLinear, shapePalette: palShapes });
@@ -1931,6 +1936,8 @@
   $('#saveFileBtn').addEventListener('click', function () { closeMenu(); saveWorldFile(); });
   $('#openFileBtn').addEventListener('click', function () { closeMenu(); if (net) { toast('Leave the room before opening a world file.'); return; } $('#openFile').click(); });
   $('#openFile').addEventListener('change', function (e) { var f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) openWorldFile(f); });
+  $('#addFileBtn').addEventListener('click', function () { closeMenu(); $('#addFile').click(); });
+  $('#addFile').addEventListener('change', function (e) { var f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) addWorldFile(f); });
   $('#mode').addEventListener('click', toggleFly);
   $('#smaller').addEventListener('click', function () { setSize(state.size - 0.05); });
   $('#bigger').addEventListener('click', function () { setSize(state.size + 0.05); });
@@ -2578,9 +2585,9 @@
       grid(peers.slice(0, 4).map(function (p) { return { label: p.isMe ? state.name + ' (you)' : String((p.presence && p.presence.nm) || 'Someone').slice(0, 20), swatchSmall: p.isMe ? PALETTE[state.avatar][1] : peerColor(p), info: true }; }), 2, 186, 60);
       if (ar.active) {
         grid(AR_SCALES.map(function (s) { return { label: s[0], active: Math.abs(ar.scale - s[1]) < 1e-6, run: function () { setArScale(s[1]); } }; }).concat([{ label: 'Move board (tap Y)', run: function () { ar.placed = false; } }]), 4, 340, 66);
-        grid([{ label: 'Center on start', run: function () { ar.fcx = 4; ar.fcz = 4; } }, { label: switchLabel(), run: switchXR }], 2, 414, 66);
-      } else grid([{ label: state.fly ? 'Flying (tap Y)' : 'Walking (tap Y)', run: toggleFly }, { label: 'Start (H)', run: function () { goPlace(0); } }, { label: switchLabel(), run: switchXR }], 3, 340, 74);
-      note(500, isTourist() ? (visitorsMayBuild() ? 'Look round and explore. Leave tour to build. Hold Y to hide this panel.' : 'This world’s owner lets visitors explore, not build. Hold Y to hide this panel.') : 'Scenes are under Sounds & Images ▸ Scenes. Hold Y to hide or show this panel.');
+        grid([{ label: 'Center on start', run: function () { ar.fcx = 4; ar.fcz = 4; } }, { label: switchLabel(), run: switchXR }, { label: 'Leave AR', run: leaveXR }], 3, 414, 66);
+      } else grid([{ label: state.fly ? 'Flying (tap Y)' : 'Walking (tap Y)', run: toggleFly }, { label: 'Start (H)', run: function () { goPlace(0); } }, { label: switchLabel(), run: switchXR }, { label: 'Leave VR', run: leaveXR }], 4, 340, 74);
+      note(500, isTourist() ? (visitorsMayBuild() ? 'Look round and explore. Leave tour to build. Hold Y to hide this panel.' : 'This world’s owner lets visitors explore, not build. Hold Y to hide this panel.') : 'Scenes are under Sounds & Images ▸ Scenes. Hold Y to hide or show this panel. Leave VR for the ⋯ menu: world files, rooms and settings.');
     }
     for (var k = first; k < B.length; k++) B[k].y += PANEL_TOP;
     // Always-there bar, like Open Blocks' undo/redo: undo, redo, snap, and hiding the panel.
@@ -2792,6 +2799,8 @@
   // Switching between VR and passthrough AR from the wrist panel: end this session, start the other.
   var pendingSwitch = null;
   function switchXR() { pendingSwitch = xrMode === 'immersive-ar' ? 'immersive-vr' : 'immersive-ar'; var s = renderer.xr.getSession(); if (s) s.end(); }
+  // Back to the flat page (its ⋯ menu has world files, rooms and settings); Enter VR brings you back in.
+  function leaveXR() { if (renderer.xr.isPresenting) renderer.xr.getSession().end(); }
   function switchLabel() { return xrMode === 'immersive-ar' ? 'Switch to VR' : 'Switch to AR'; }
   function xrOff(btn, label, reason) { btn.classList.add('off'); btn.textContent = label; btn.setAttribute('aria-label', label + ' unavailable here'); return reason; }
   var NO_HEADSET = 'Play on a Meta Quest headset (or Chrome on an AR-capable Android phone for AR).';
@@ -3073,6 +3082,43 @@
       if (!studio.deserializeBin(await ClayNet.unpackBytes(o.data))) throw new Error('bad');
       setSelection([]); streamTerrain(400); goPlace(0); saveLocal(false); toast('Opened ' + file.name);
     } catch (e) { toast('That file isn’t an Endless Clay world.'); }
+  }
+
+  // Add a world file's shapes, photos, sounds, land skins and billboards to this world, keeping everything already
+  // here. It arrives where it was made, as one step (Undo takes it all away again), and everyone in the room gets it.
+  // A file can name its ground level (x.ground): it's then moved up or down so that level meets the highest land
+  // under it, since this world's land isn't the one it was made on.
+  async function addWorldFile(file) {
+    if (!canEdit()) return;
+    try {
+      var o = JSON.parse(await file.text());
+      if (o.app !== 'endless-clay' || !o.data) throw new Error('not a world');
+      var tmp = new ClayStudio.Studio({ palette: palLinear, shapePalette: palShapes }), head = tmp.deserializeBin(await ClayNet.unpackBytes(o.data));
+      if (!head) throw new Error('bad');
+      var dy = 0, ground = head.x && typeof head.x.ground === 'number' && isFinite(head.x.ground) ? head.x.ground : null;
+      if (ground !== null && tmp.objects.size) {
+        var b = [Infinity, Infinity, -Infinity, -Infinity];
+        tmp.objects.forEach(function (x) { var hx = 0.64 * x.s[0], hz = 0.64 * x.s[2]; b[0] = Math.min(b[0], x.p[0] - hx); b[1] = Math.min(b[1], x.p[2] - hz); b[2] = Math.max(b[2], x.p[0] + hx); b[3] = Math.max(b[3], x.p[2] + hz); });
+        var top = -Infinity, step = Math.max(1, Math.max(b[2] - b[0], b[3] - b[1]) / 60);
+        for (var gx = b[0]; gx <= b[2]; gx += step) for (var gz = b[1]; gz <= b[3]; gz += step) top = Math.max(top, terrain.surfaceY(gx, gz));
+        if (isFinite(top)) dy = top - ground;
+      }
+      var gids = new Map(), ids = new Map(), list = [];
+      tmp.objects.forEach(function (x) {
+        var r = tmp.record(x, true); r.id = uid('o'); ids.set(x.id, r.id); r.p[1] += dy;
+        if (r.g) { if (!gids.has(r.g)) gids.set(r.g, uid('g')); r.g = gids.get(r.g); }
+        list.push(r);
+      });
+      studio.begin();
+      tmp.skins.forEach(function (d, id) { if (!studio.skins.has(id)) edit({ t: 'skin', id: id, d: d }); });
+      tmp.sounds.forEach(function (d, id) { if (!studio.sounds.has(id)) edit({ t: 'sound', id: id, d: d }); });
+      if (list.length) edit({ t: 'put', l: list });
+      tmp.decals.forEach(function (d) { edit({ t: 'decal', d: Object.assign({}, d, { id: uid('d'), c: [d.c[0], d.c[1] + dy, d.c[2]] }) }); });
+      tmp.boards.forEach(function (d) { var at = d.at && ids.get(d.at); edit({ t: 'board', d: Object.assign({}, d, { id: uid('b'), p: at ? d.p : [d.p[0], d.p[1] + dy, d.p[2]], at: at || null }) }); });
+      studio.end();
+      saveLocal(false);
+      toast('Added ' + file.name + ': ' + list.length + ' shape' + (list.length === 1 ? '' : 's') + '. Undo takes it away again.');
+    } catch (e) { if (studio.action) studio.end(); toast('That file isn’t an Endless Clay world.'); }
   }
 
   // ---------- Loop ----------
