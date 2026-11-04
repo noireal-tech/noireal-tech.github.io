@@ -6,6 +6,18 @@
 <meta name="theme-color" content="#1b1712">
 <title>Memory Palace</title>
 <link rel="manifest" href="../manifest.webmanifest">
+<script>
+  // Arriving from another VR page: the headset can hand over its VR session the moment this page starts loading.
+  // Listen before the big scripts load, or the offer is missed and the headset waits on a black screen.
+  // The session is asked for right here, inside the offer; the app picks it up once it has loaded.
+  window.__xrGranted = false; window.__xrSession = null;
+  if (navigator.xr && navigator.xr.addEventListener) navigator.xr.addEventListener('sessiongranted', function () {
+    window.__xrGranted = true;
+    window.__xrSession = navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
+    window.__xrSession.catch(function () { window.__xrSession = null; });
+    window.dispatchEvent(new Event('xrgranted'));
+  });
+</script>
 <style>
   @font-face { font-family: 'Bricolage Grotesque'; src: url('../fonts/bricolage-grotesque.woff2') format('woff2'); font-weight: 200 800; font-display: swap; }
   :root { --ink: #f4ead8; --dim: #c9bba1; --panel: rgba(27, 23, 18, 0.72); --line: rgba(244, 234, 216, 0.16); --gold: #d4ad55; --teal: #6cc9d4; }

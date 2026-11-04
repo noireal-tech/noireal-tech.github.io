@@ -11,8 +11,9 @@
   function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
 
   // Arriving through the portal from VR: the browser may grant a session we can start without a tap.
-  var granted = false, ready = false;
-  if (navigator.xr && navigator.xr.addEventListener) navigator.xr.addEventListener('sessiongranted', function () { granted = true; enterVR(); }); // straight in: the palace finishes building around you
+  // (The page's first script listens for the offer, before the big scripts load, and sets window.__xrGranted.)
+  var granted = !!window.__xrGranted, ready = false;
+  addEventListener('xrgranted', function () { granted = true; enterVR(); }); // straight in: the palace finishes building around you
 
   // ---------- Renderer, sky and light ----------
   var renderer = new THREE.WebGLRenderer({ canvas: $('#scene'), antialias: true, powerPreference: 'high-performance' });
@@ -58,12 +59,17 @@
   function fbm(u, v, base, oct, s) { var t = 0, amp = 0.5, f = base, n = 0; for (var o = 0; o < oct; o++) { t += amp * vnoise(u * f, v * f, f, s + o * 17); n += amp; amp *= 0.5; f *= 2; } return t / n; }
   // Paint a size×size texture: fn(u, v) → [height, r, g, b, roughness] (0..1, colours 0..255). Returns map, normal and roughness textures.
   var MAXANISO = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-  function paint(size, strength, fn) {
-    var n = size * size, H = new Float32Array(n), C = new Uint8Array(n * 4), R = new Uint8Array(n * 4), N = new Uint8Array(n * 4);
-    for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+  // Painting runs in short slices (a few milliseconds each) so the headset keeps drawing frames while it works.
+  function gap() { return new Promise(function (r) { setTimeout(r, 0); }); }
+  async function paint(size, strength, fn) {
+    var n = size * size, H = new Float32Array(n), C = new Uint8Array(n * 4), R = new Uint8Array(n * 4), N = new Uint8Array(n * 4), t = performance.now();
+    for (var y = 0; y < size; y++) {
+      if (performance.now() - t > 6) { await gap(); t = performance.now(); }
+      for (var x = 0; x < size; x++) {
       var o = fn(x / size, y / size), i = y * size + x;
       H[i] = o[0]; C[i * 4] = o[1]; C[i * 4 + 1] = o[2]; C[i * 4 + 2] = o[3]; C[i * 4 + 3] = 255;
       R[i * 4] = R[i * 4 + 1] = R[i * 4 + 2] = Math.round(o[4] * 255); R[i * 4 + 3] = 255;
+      }
     }
     for (y = 0; y < size; y++) for (x = 0; x < size; x++) {
       var l = H[y * size + (x + size - 1) % size], r = H[y * size + (x + 1) % size], dn = H[((y + size - 1) % size) * size + x], up = H[((y + 1) % size) * size + x];
@@ -97,50 +103,50 @@
   }
   var T = {};
   var TEX_STEPS = [
-    function () { T.stone = blocks(512, 6, 0.16, 0.42, 0.02, 0.06, [128, 121, 108], 0.24, 11); },
-    function () { T.paving = blocks(512, 5, 0.25, 0.5, 0.012, 0.03, [168, 156, 136], 0.12, 23, 2.2); },
-    function () {
-      T.plaster = paint(512, 1.5, function (u, v) { var g = fbm(u, v, 6, 5, 31), f = fbm(u, v, 48, 2, 33), t = 0.95 + 0.05 * g - 0.03 * f; return [0.4 * g + 0.2 * f, 241 * t, 237 * t, 228 * t, 0.9]; });
+    async function () { T.stone = await blocks(512, 6, 0.16, 0.42, 0.02, 0.06, [128, 121, 108], 0.24, 11); },
+    async function () { T.paving = await blocks(512, 5, 0.25, 0.5, 0.012, 0.03, [168, 156, 136], 0.12, 23, 2.2); },
+    async function () {
+      T.plaster = await paint(512, 1.5, function (u, v) { var g = fbm(u, v, 6, 5, 31), f = fbm(u, v, 48, 2, 33), t = 0.95 + 0.05 * g - 0.03 * f; return [0.4 * g + 0.2 * f, 241 * t, 237 * t, 228 * t, 0.9]; });
     },
-    function () {
-      T.timber = paint(512, 3, function (u, v) {
+    async function () {
+      T.timber = await paint(512, 3, function (u, v) {
         var g = fbm(u, v, 4, 3, 41), grain = 0.5 + 0.5 * Math.sin((u * 16 + g * 2.2) * Math.PI * 2), fine = fbm(u, v, 64, 2, 45), board = hash(Math.floor(u * 6), 3, 43);
         var t = (0.86 + 0.14 * grain) * (0.88 + 0.24 * board) * (0.92 + 0.16 * fine); return [0.3 * grain + 0.3 * g + 0.2 * fine, 64 * t, 49 * t, 40 * t, 0.6 + 0.12 * grain];
       });
     },
-    function () { // glazed roof tiles: round cover tiles down the slope over concave pan tiles, in overlapping courses
-      T.roof = paint(512, 7, function (u, v) {
+    async function () { // glazed roof tiles: round cover tiles down the slope over concave pan tiles, in overlapping courses
+      T.roof = await paint(512, 7, function (u, v) {
         var p = (u * 8) % 1, q = (v * 8) % 1, h, id = hash(Math.floor(u * 8), Math.floor(v * 8), 51);
         if (p < 0.32) { var a = (p - 0.16) / 0.16; h = 0.55 + 0.45 * Math.sqrt(Math.max(0, 1 - a * a)); } else { var b = (p - 0.66) / 0.34; h = 0.2 + 0.18 * b * b; }
         h += 0.22 * (1 - q); var g = fbm(u, v, 16, 3, 53), t = (0.9 + 0.2 * id) * (0.9 + 0.15 * g) * (q < 0.06 ? 0.7 : 1);
         return [h, 66 * t, 71 * t, 78 * t, 0.42 + 0.2 * g];
       });
     },
-    function () { // raked gravel: fine stones in parallel grooves
-      T.gravel = paint(512, 4, function (u, v) {
+    async function () { // raked gravel: fine stones in parallel grooves
+      T.gravel = await paint(512, 4, function (u, v) {
         var s = hash(Math.floor(u * 256), Math.floor(v * 256), 61), g = fbm(u, v, 128, 2, 63), rake = 0.5 + 0.5 * Math.sin(v * Math.PI * 2 * 14);
         var t = (0.84 + 0.2 * s) * (0.97 + 0.03 * rake) * (0.9 + 0.2 * fbm(u, v, 4, 3, 65)); return [0.25 * rake + 0.5 * g + 0.25 * s, 172 * t, 163 * t, 146 * t, 0.95];
       });
     },
-    function () {
-      T.grass = paint(512, 2.5, function (u, v) {
+    async function () {
+      T.grass = await paint(512, 2.5, function (u, v) {
         var g = fbm(u, v, 4, 4, 71), b = fbm(u, v, 64, 2, 73), dry = fbm(u, v, 8, 3, 75), t = (0.7 + 0.5 * g) * (0.85 + 0.3 * b);
         return [0.6 * b + 0.3 * g, (62 + 40 * dry) * t, (92 + 14 * dry) * t, (40 + 16 * dry) * t, 0.96];
       });
     },
-    function () { // shoji: rice paper in a timber lattice; the paper glows from within
-      T.shoji = paint(256, 2, function (u, v) {
+    async function () { // shoji: rice paper in a timber lattice; the paper glows from within
+      T.shoji = await paint(256, 2, function (u, v) {
         var lu = Math.min(Math.abs((u * 3) % 1), 1 - (u * 3) % 1), lv = Math.min(Math.abs((v * 4) % 1), 1 - (v * 4) % 1), edge = Math.min(u, v, 1 - u, 1 - v);
         var frame = lu < 0.04 || lv < 0.04 || edge < 0.035, g = fbm(u, v, 16, 3, 81);
         return frame ? [1, 52, 40, 33, 0.6] : [0.2 + 0.1 * g, 238, 229 - 6 * g, 206 - 10 * g, 0.9];
       });
       T.shoji.map.userData = { glow: true };
     },
-    function () { // water: soft wind ripples
-      T.water = paint(256, 6, function (u, v) { var h = fbm(u, v, 8, 4, 111) * 0.7 + fbm(u, v, 32, 2, 113) * 0.3; return [h, 30, 58, 64, 0.06]; });
+    async function () { // water: soft wind ripples
+      T.water = await paint(256, 6, function (u, v) { var h = fbm(u, v, 8, 4, 111) * 0.7 + fbm(u, v, 32, 2, 113) * 0.3; return [h, 30, 58, 64, 0.06]; });
     },
-    function () { // gate timber with iron studs
-      T.gate = paint(256, 4, function (u, v) {
+    async function () { // gate timber with iron studs
+      T.gate = await paint(256, 4, function (u, v) {
         var g = fbm(u, v, 4, 3, 91), grain = 0.5 + 0.5 * Math.sin((u * 12 + g * 1.2) * Math.PI * 2), su = (u * 6) % 1 - 0.5, sv = (v * 8) % 1 - 0.5, st = Math.hypot(su, sv) < 0.12;
         return st ? [1, 168, 130, 70, 0.3] : [0.35 * grain, 44 * (0.8 + 0.3 * grain), 33 * (0.8 + 0.3 * grain), 28, 0.6];
       });
@@ -485,14 +491,30 @@
 
   // ---------- Building it all, a step at a time (so a granted VR session can start straight away) ----------
   var status = $('#status');
-  function say(t) { if (status) status.textContent = t; }
+  function say(t) { if (status) status.textContent = t; drawLabel(t); }
+  // In the headset the card can't be seen, so while the palace is being raised a small label floats in front of you.
+  var labelCanvas = document.createElement('canvas'); labelCanvas.width = 1024; labelCanvas.height = 192;
+  var labelTex = new THREE.CanvasTexture(labelCanvas); labelTex.colorSpace = THREE.SRGBColorSpace;
+  var label = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.225), new THREE.MeshBasicMaterial({ map: labelTex, transparent: true, depthTest: false, fog: false, toneMapped: false }));
+  label.position.set(0, -0.15, -1.6); label.renderOrder = 10; label.visible = false; camera.add(label);
+  function drawLabel(t) {
+    var g = labelCanvas.getContext('2d'); g.clearRect(0, 0, 1024, 192);
+    g.fillStyle = 'rgba(27, 23, 18, 0.78)'; g.beginPath(); g.roundRect ? g.roundRect(8, 8, 1008, 176, 40) : g.rect(8, 8, 1008, 176); g.fill();
+    g.fillStyle = '#d4ad55'; g.font = '600 34px "Bricolage Grotesque", system-ui, sans-serif'; g.textAlign = 'center'; g.fillText('MEMORY PALACE', 512, 72);
+    g.fillStyle = '#f4ead8'; g.font = '500 44px "Bricolage Grotesque", system-ui, sans-serif'; g.fillText(t, 512, 136, 960);
+    labelTex.needsUpdate = true;
+  }
   function frameGap() { return new Promise(function (r) { setTimeout(r, 0); }); }
   async function build() {
-    for (var i = 0; i < TEX_STEPS.length; i++) { say('Making materials… ' + Math.round(i / TEX_STEPS.length * 100) + '%'); TEX_STEPS[i](); await frameGap(); }
+    for (var i = 0; i < TEX_STEPS.length; i++) { say('Making materials… ' + Math.round(i / TEX_STEPS.length * 100) + '%'); await TEX_STEPS[i](); await frameGap(); }
     makeMaterials();
-    say('Raising the palace…'); buildLand(); buildPlatform(); flush(siteGroup); await frameGap();
+    say('Raising the palace…'); buildLand(); await frameGap(); buildPlatform(); flush(siteGroup); await frameGap();
     buildKeep(); buildRing(); flush(keepGroup); await frameGap();
     buildRooms(readPlan()); await frameGap();
+    // Prepare every material's shaders before showing them, in the background where the browser allows it,
+    // so the first full frame doesn't stall the headset.
+    say('Lighting the palace…');
+    try { if (renderer.compileAsync) await renderer.compileAsync(scene, camera); else renderer.compile(scene, camera); } catch (e) { }
     renderer.shadowMap.needsUpdate = true; // the sun doesn't move: shadows are drawn once
     say(readPlan() ? 'Your palace is ready.' : 'The palace is ready. Open your palace plan to raise your rooms.');
     built.ready = true;
@@ -548,7 +570,7 @@
   function goHome() {
     if (leaving) return; leaving = true;
     var h = null; try { h = JSON.parse(lsGet(HANDOFF) || 'null'); } catch (e) { }
-    lsSet(HANDOFF, JSON.stringify({ from: 'palace', at: Date.now(), mode: 'immersive-vr', back: h && h.back || '', debug: DEBUG }));
+    lsSet(HANDOFF, JSON.stringify({ from: 'palace', at: Date.now(), mode: renderer.xr.isPresenting ? 'immersive-vr' : null, back: h && h.back || '', debug: DEBUG }));
     var back = (h && h.back) || '', q = (DEBUG || (h && h.debug) ? 'debug&' : '') + 'via=palace';
     location.href = '../' + back + (back.indexOf('?') >= 0 ? '&' : '?') + q;
   }
@@ -587,7 +609,8 @@
   function enterVR() {
     if (!navigator.xr || renderer.xr.isPresenting || asking) return;
     asking = true;
-    navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] }).then(function (s) {
+    var early = window.__xrSession; window.__xrSession = null; // asked for by the page's first script, inside the portal's offer
+    (early || navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] })).then(function (s) {
       s.addEventListener('end', function () { camera.position.set(0, EYE, 0); $('#card').hidden = false; });
       return renderer.xr.setSession(s).then(function () { camera.position.set(0, 0, 0); $('#card').hidden = true; rig.rotation.y = flatYaw; });
     }).catch(function () { say('Press Enter the palace to go in.'); }).then(function () { asking = false; });
@@ -610,26 +633,30 @@
   // ---------- Loop ----------
   function resize() { renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
   addEventListener('resize', resize); resize();
-  var last = performance.now(), t0 = last;
+  var last = performance.now(), t0 = last, frameLog = [];
   renderer.setAnimationLoop(function () {
     var now = performance.now(), dt = Math.min(0.05, (now - last) / 1000); last = now;
+    if (DEBUG) { frameLog.push([now, renderer.xr.isPresenting ? 1 : 0]); if (frameLog.length > 2000) frameLog.shift(); }
     if (ringSurf) ringSurf.uniforms.uTime.value = (now - t0) / 1000;
     if (M.water) M.water.normalMap.offset.set((now - t0) * 0.000006, (now - t0) * 0.000011);
-    if (built.ready) { if (renderer.xr.isPresenting) vrInput(dt); else flatInput(dt); checkRing(); }
+    label.visible = renderer.xr.isPresenting && !built.ready;
+    try { if (built.ready) { if (renderer.xr.isPresenting) vrInput(dt); else flatInput(dt); checkRing(); } }
+    catch (e) { if (DEBUG) console.error(e); }
     renderer.render(scene, camera);
   });
 
   arrive();
   if (VIA_CLAY) $('#card').classList.add('arriving');
+  if (granted) enterVR();
   build().then(function () {
     ready = true;
     if (granted) enterVR();
-  });
+  }, function (e) { built.ready = true; say('Something went wrong raising the palace. Walk back through the ring, or reload.'); if (DEBUG) console.error(e); });
   if (DEBUG) window.palaceDebug = {
     renderer: renderer, scene: scene, rig: rig, camera: camera, ring: RING, groundAt: groundAt,
     ready: function () { return !!built.ready; }, stats: function () { return { tris: renderer.info.render.triangles, calls: renderer.info.render.calls, meshes: built.length }; },
     look: function (yaw, pitch) { flatYaw = yaw; flatPitch = pitch; rig.rotation.y = yaw; camera.rotation.set(pitch, 0, 0); }, place: function (x, y, z, h) { rig.position.set(x, y, z); headPrev = null; hold = !!h; },
     walk: function (n, f, s) { for (var i = 0; i < n; i++) { move(1 / 60, f, s === undefined ? 0 : s); checkRing(); } return rig.position.toArray(); },
-    rebuild: rebuildRooms
+    rebuild: rebuildRooms, frames: function () { return frameLog; }, presenting: function () { return renderer.xr.isPresenting; }
   };
 })();

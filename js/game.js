@@ -2913,7 +2913,8 @@
       : { optionalFeatures: ['local-floor', 'bounded-floor'] };
     if (xrAsking) return; // one request at a time (a granted session and the installed app's own start can race)
     xrAsking = true;
-    navigator.xr.requestSession(mode, opts).then(function (s) {
+    var early = mode === 'immersive-vr' && window.__xrSession; window.__xrSession = null; // asked for by the page's first script, inside a portal's offer
+    (early || navigator.xr.requestSession(mode, opts)).then(function (s) {
       s.addEventListener('end', onExitXR);
       return renderer.xr.setSession(s).then(function () {
         xrMode = mode; prefs.mode = mode; savePrefs();
@@ -3318,8 +3319,8 @@
 
   // ---------- Boot ----------
   // Arriving through a portal from another VR page: the browser may grant a session we can start without a tap.
-  var granted = false, booted = false;
-  if (navigator.xr && navigator.xr.addEventListener) navigator.xr.addEventListener('sessiongranted', function () {
+  var granted = !!window.__xrGranted, booted = false;
+  addEventListener('xrgranted', function () {
     granted = true; if (booted && !renderer.xr.isPresenting) startXR(prefs.mode === 'immersive-ar' ? 'immersive-ar' : 'immersive-vr');
   });
   (async function boot() {

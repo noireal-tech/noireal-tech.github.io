@@ -677,6 +677,18 @@
   </section>
 </div>
 
+<script>
+  // Arriving from another VR page: the headset can hand over its VR session the moment this page starts loading.
+  // Listen before the big scripts load, or the offer is missed and the headset waits on a black screen.
+  // The session is asked for right here, inside the offer; the app picks it up once it has loaded.
+  window.__xrGranted = false; window.__xrSession = null;
+  if (navigator.xr && navigator.xr.addEventListener) navigator.xr.addEventListener('sessiongranted', function () {
+    window.__xrGranted = true;
+    window.__xrSession = navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
+    window.__xrSession.catch(function () { window.__xrSession = null; });
+    window.dispatchEvent(new Event('xrgranted'));
+  });
+</script>
 <script src="lib/three.min.js"></script>
 <script src="lib/peerjs.min.js"></script>
 <script src="lib/qrcode.js"></script>
