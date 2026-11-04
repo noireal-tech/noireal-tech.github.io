@@ -1642,9 +1642,20 @@
     portalGoing = true; sound('tap');
     try { await saveLocal(false); } catch (e) { }
     try { localStorage.setItem(HANDOFF, JSON.stringify({ from: 'clay', at: Date.now(), mode: xrMode, back: location.pathname.split('/').pop() || '', debug: DEBUG })); } catch (e) { }
-    location.href = 'palace/' + (DEBUG ? '?debug&via=clay' : '?via=clay');
+    location.href = palaceLink('via=clay');
   }
   var portalGoing = false;
+  // The Memory Palace is its own Quest app. Installed, the trip asks Android to open it (falling back to its web
+  // address); in a browser tab it's a page change, which lets the headset carry the VR session across.
+  var PALACE_PKG = 'com.noirealtech.memorypalace', PALACE_PATH = '/memory-palace/index.html';
+  var launchedAsApp = (function () { try { if (document.referrer.indexOf('android-app://') === 0) sessionStorage.setItem('clay.app', '1'); return sessionStorage.getItem('clay.app') === '1' || (window.matchMedia && matchMedia('(display-mode: standalone)').matches); } catch (e) { return false; } })();
+  function palaceLink(query) {
+    if (DEBUG) query = 'debug&' + query;
+    var web = (DEBUG && new URLSearchParams(location.search).get('palace')) || (location.origin + PALACE_PATH);
+    web += (web.indexOf('?') >= 0 ? '&' : '?') + query;
+    if (!launchedAsApp || location.hostname !== 'noireal-tech.github.io') return web;
+    return 'intent://' + location.host + PALACE_PATH + '?' + query + '#Intent;scheme=https;package=' + PALACE_PKG + ';S.browser_fallback_url=' + encodeURIComponent(web) + ';end';
+  }
   function syncPortals(now) {
     if (studio.portalVer !== seenPortalVer) {
       seenPortalVer = studio.portalVer;
